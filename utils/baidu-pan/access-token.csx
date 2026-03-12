@@ -4,8 +4,6 @@
 #nullable enable
 
 using System.Net.Http;
-using System.Runtime.CompilerServices;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
@@ -31,17 +29,14 @@ private static readonly ConfigHolder<Config> configHolder = new();
 static async Task<string> GetAccessTokenAsync()
 {
 	// 配置不存在，要求用户输入。
-	Config? config = configHolder.Config;
-	if (config == null)
+	var config = configHolder.Config;
+	if (config.AppKey == null || config.SecretKey == null)
 	{
 		var appKey = AnsiConsole.Ask<string>("请输入百度网盘的 [green]AppKey[/]:");
 		var secretKey = AnsiConsole.Ask<string>("请输入百度网盘的 [green]SecretKey[/]:");
-		config = new Config
-		{
-			AppKey = appKey,
-			SecretKey = secretKey,
-		};
-		configHolder.Write(config);
+		config.AppKey = appKey;
+		config.SecretKey = secretKey;
+		configHolder.Save();
 	}
 	if (config.AccessToken == null || config.RefreshToken == null)
 	{
@@ -49,7 +44,7 @@ static async Task<string> GetAccessTokenAsync()
 		// 或者如果没有 RefreshToken，也需要请求授权。
 		await RequestAccessTokenAsync(config);
 		// 保存配置。
-		configHolder.Write(config);
+		configHolder.Save();
 	}
 	else if (config.AccessTokenExpires <= DateTimeOffset.Now.ToUnixTimeMilliseconds())
 	{
@@ -153,12 +148,12 @@ static async Task RefreshAccessTokenAsync(Config config)
 
 private class Config
 {
-	public required string AppKey { get; init; }
-	public required string SecretKey { get; init; }
+	public string? AppKey { get; set; } = null;
+	public string? SecretKey { get; set; } = null;
 	/// <summary>
 	/// 访问码，是调用网盘开放API访问用户授权资源的凭证。
 	/// </summary>
-	public string? AccessToken { get; set; }
+	public string? AccessToken { get; set; } = null;
 	/// <summary>
 	/// 访问码的过期时间。
 	/// </summary>
@@ -166,7 +161,7 @@ private class Config
 	/// <summary>
 	/// 用于刷新 Access Token 的更新码，有效期为 10 年。
 	/// </summary>
-	public string? RefreshToken { get; set; }
+	public string? RefreshToken { get; set; } = null;
 
 	/// <summary>
 	/// 从指定 Access Token 结果复制。
