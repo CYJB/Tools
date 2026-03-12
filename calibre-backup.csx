@@ -112,11 +112,13 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		BackupConfig config = configHolder.Config;
 		if (!string.IsNullOrEmpty(settings.Dir))
 		{
-			config.Dir = settings.Dir;
-			if (!config.Dir.EndsWith('/'))
-			{
-				config.Dir += "/";
-			}
+			config.Dir = NormalizeDir(settings.Dir);
+			configHolder.Save();
+		}
+		if (string.IsNullOrEmpty(config.Dir))
+		{
+			// 不指定备份目录容易误覆盖，这里总是询问。
+			config.Dir = NormalizeDir(AnsiConsole.Ask<string>("请输入网盘的备份目录:"));
 			configHolder.Save();
 		}
 		// 列出备份文件信息。
@@ -127,13 +129,30 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		else
 		{
 			// 将数据备份到云盘。
+			cloudDir = config.Dir!;
+			AnsiConsole.MarkupLine($"准备将 [green]{currentDir}[/] 备份至 [green]{cloudDir}[/]");
 			// 提前获取云盘文件列表。
-			cloudDir = config.Dir ?? "/";
 			backupTempPath = Path.Combine(currentDir, BackupTempFile);
 			cloudFiles = await cloud.List(cloudDir);
 			await BackupCloud(currentDir);
 		}
 		return 0;
+	}
+
+	/// <summary>
+	/// 标准化备份目录。
+	/// </summary>
+	private static string NormalizeDir(string dir)
+	{
+		if (!dir.StartsWith('/'))
+		{
+			dir = "/" + dir;
+		}
+		if (!dir.EndsWith('/'))
+		{
+			dir += "/";
+		}
+		return dir;
 	}
 
 	/// <summary>
