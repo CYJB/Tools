@@ -4,7 +4,7 @@
 #load "baidu-pan/file-block.csx"
 #load "baidu-pan/list-query.csx"
 #load "http.csx"
-#r "nuget: Spectre.Console, 0.48.0"
+#r "nuget: Spectre.Console, 0.54.0"
 #nullable enable
 
 using System.Net.Http;

@@ -6,8 +6,8 @@
 #load "utils/config-holder.csx"
 #load "utils/md5.csx"
 #load "utils/string.csx"
-#r "nuget: Spectre.Console, 0.48.0"
-#r "nuget: Spectre.Console.Cli, 0.48.0"
+#r "nuget: Spectre.Console, 0.54.0"
+#r "nuget: Spectre.Console.Cli, 0.53.1"
 #r "nuget: System.Text.Encoding.CodePages, 10.0.5"
 
 #nullable enable
@@ -108,6 +108,11 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 	public override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings)
 	{
 		var currentDir = settings.Path ?? Directory.GetCurrentDirectory();
+		if (!File.Exists(Path.Combine(currentDir, "metadata.db")))
+		{
+			AnsiConsole.MarkupLine($"[red]{currentDir}[/] 不是 calibre 电子书目录");
+			return 0;
+		}
 		configHolder = new ConfigHolder<BackupConfig>(Path.Combine(currentDir, BackupConfigFile));
 		BackupConfig config = configHolder.Config;
 		if (!string.IsNullOrEmpty(settings.Dir))
@@ -311,6 +316,12 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		{
 			// 备份失败。
 			AnsiConsole.MarkupLine($"    [red]备份 {escapedName} 失败[/]: {e.Message}");
+			AnsiConsole.WriteException(e, ExceptionFormats.ShortenPaths);
+			// 移除临时文件。
+			if (File.Exists(backupTempPath))
+			{
+				File.Delete(backupTempPath);
+			}
 		}
 		return false;
 	}
