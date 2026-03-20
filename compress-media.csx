@@ -5,14 +5,11 @@
 #load "utils/config-holder.csx"
 #load "utils/console.csx"
 #load "utils/file.csx"
+#load "utils/image.csx"
 #load "utils/ffmpeg.csx"
 #load "utils/task.csx"
-// https://github.com/dlemstra/Magick.NET
-#r "nuget: Magick.NET.Core, 14.3.0"
-#r "nuget: Magick.NET-Q8-x64, 14.3.0"
 #r "nuget: Spectre.Console, 0.54.0"
 #r "nuget: Spectre.Console.Cli, 0.53.1"
-#r "nuget: Xabe.FFmpeg, 5.2.6"
 
 #nullable enable
 
@@ -313,8 +310,7 @@ sealed class CompressCommand : AsyncCommand<CompressCommand.Settings>
 			{
 				image.Resize((uint)width, (uint)height);
 				image.Quality = 85;
-				image.ColorSpace = ColorSpace.sRGB;
-				image.Format = MagickFormat.Jpeg;
+				image.Format = GetMagickFormat(imageExt);
 				byte[] data = image.ToByteArray();
 				File.WriteAllBytes(Path.ChangeExtension(file, imageExt), data);
 			}

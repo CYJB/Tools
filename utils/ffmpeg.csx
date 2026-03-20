@@ -6,6 +6,13 @@
 using Xabe.FFmpeg;
 
 /// <summary>
+/// 视频的扩展名。
+/// </summary>
+public static readonly HashSet<string> VideoExt = [
+	".mp4", ".avi", ".mvk", ".mov",
+];
+
+/// <summary>
 /// 配置 ffmpeg 路径。
 /// </summary>
 static void SetupFFmpeg()

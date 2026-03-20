@@ -1,19 +1,5 @@
 using System.Runtime.CompilerServices;
 
-/// <summary>
-/// 图片的扩展名。
-/// </summary>
-public static readonly HashSet<string> ImageExt = [
-	".jpg", ".jpeg", ".png", ".bmp", ".heic",
-];
-
-/// <summary>
-/// 视频的扩展名。
-/// </summary>
-public static readonly HashSet<string> VideoExt = [
-	".mp4", ".avi", ".mvk", ".mov",
-];
-
 /**
  * 返回当前脚本所在的文件夹。
  */
