@@ -16,6 +16,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -63,12 +64,17 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 	/// </summary>
 	private const string BackupTempFile = ".backup-temp.7z";
 	/// <summary>
-	/// calibre 的元数据文件名。
+	/// calibre 的元数据数据库。
 	/// </summary>
-	private readonly string[] CalibreMetadata = [
-		"metadata.db",
-		"metadata_db_prefs_backup.json",
-	];
+	private const string MetadataDB = "metadata.db";
+	/// <summary>
+	/// calibre 的元数据数据库备份。
+	/// </summary>
+	private const string MetadataBackupDB = "metadata_backup.db";
+	/// <summary>
+	/// calibre 的元数据备份。
+	/// </summary>
+	private const string MetadataDBPrefsBackup = "metadata_db_prefs_backup.json";
 	/// <summary>
 	/// 密码的字符范围。
 	/// </summary>
@@ -105,10 +111,10 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 	/// <summary>
 	/// 执行命令。
 	/// </summary>
-	public override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings)
+	public override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
 	{
 		var currentDir = settings.Path ?? Directory.GetCurrentDirectory();
-		if (!File.Exists(Path.Combine(currentDir, "metadata.db")))
+		if (!File.Exists(Path.Combine(currentDir, MetadataDB)))
 		{
 			AnsiConsole.MarkupLine($"[red]{currentDir}[/] 不是 calibre 电子书目录");
 			return 0;
@@ -187,7 +193,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 	/// </summary>
 	private async Task BackupCloud(string dir)
 	{
-		bool isBackup = false;
+		bool hasBackup = false;
 		var authors = Directory.GetDirectories(dir)
 			.Select(path => Path.GetFileName(path))
 			.Where(name => !name.StartsWith('.'))
@@ -198,14 +204,23 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 			AnsiConsole.WriteLine($"正在扫描 {i + 1}/{authors.Count} {author}");
 			if (await BackupAuthor(Path.Combine(dir, author), author))
 			{
-				isBackup = true;
+				hasBackup = true;
 			}
 		}
-		if (isBackup)
+		if (hasBackup)
 		{
 			// 发生了备份操作，备份配置本身。
 			await AnsiConsole.Status().StartAsync($"    备份配置", async ctx =>
 			{
+				// calibre 在运行时会占用 metadata.db，会导致 7z 压缩失败。
+				// 总是将 metadata.db 备份为 metadata_backup.db，确保不会压缩失败
+				string metaPath = Path.Combine(dir, MetadataDB);
+				string metaBackupPath = Path.Combine(dir, MetadataBackupDB);
+				using (FileStream stream = File.Open(metaPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+				{
+					using FileStream outStream = File.OpenWrite(metaBackupPath);
+					await stream.CopyToAsync(outStream);
+				}
 				// 配置使用固定的 id。
 				string id = "config";
 				var item = GetBackupConfigItem(id, "", "config & metadata");
@@ -216,15 +231,11 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					dirLen++;
 				}
 				// config 内容一定发生改变了。
-				List<string> files = [Path.Combine(dir, BackupConfigFile)];
-				foreach (string name in CalibreMetadata)
-				{
-					var file = Path.Combine(dir, name);
-					if (File.Exists(file))
-					{
-						files.Add(file);
-					}
-				}
+				List<string> files = [
+					Path.Combine(dir, BackupConfigFile),
+					metaBackupPath,
+					Path.Combine(dir, MetadataDBPrefsBackup),
+				];
 				await BackupFiles(id, item, files, dirLen, dir, (type, progress) =>
 				{
 					string message = $"    {type} config";
