@@ -9,6 +9,24 @@ static string GetScriptFolder([CallerFilePath] string path = null)
 }
 
 /// <summary>
+/// 检测指定的路径是否表示封面。
+/// </summary>
+static bool IsCoverFile(string path)
+{
+	string fileName = Path.GetFileNameWithoutExtension(path);
+	if (fileName.StartsWith("cover"))
+	{
+		return true;
+	}
+	var idx = fileName.IndexOf('_');
+	if (idx > 0)
+	{
+		return int.TryParse(fileName[..idx], out var value) && value == 0;
+	}
+	return false;
+}
+
+/// <summary>
 /// 安全删除指定文件
 /// </summary>
 static async Task SafeDeleteFile(string file)

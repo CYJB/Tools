@@ -9,11 +9,13 @@ using Spectre.Console;
 /// <summary>
 /// 执行指定的任务。
 /// </summary>
-static Task RunTaskAsync(List<Func<TaskContext, Task>> tasks, CancellationToken? cancellationToken = null)
+static async Task RunTaskAsync(string title, List<Func<TaskContext, Task>> tasks, CancellationToken? cancellationToken = null)
 {
 	CancellationToken token = cancellationToken == null ? CancellationToken.None : cancellationToken.Value;
-	return AnsiConsole.Live(new Rows())
-		.StartAsync(ctx => new TaskRunContext(tasks, ctx, token).Run());
+	var live = AnsiConsole.Live(new Rows()).AutoClear(true);
+	var result = await live.StartAsync(ctx => new TaskRunContext(title, tasks, ctx, token).Run());
+	AnsiConsole.Write(result);
+	AnsiConsole.WriteLine();
 }
 
 /// <summary>
@@ -21,6 +23,10 @@ static Task RunTaskAsync(List<Func<TaskContext, Task>> tasks, CancellationToken?
 /// </summary>
 private class TaskRunContext
 {
+	/// <summary>
+	/// 任务标题。
+	/// </summary>
+	private readonly string title;
 	/// <summary>
 	/// 任务总数。
 	/// </summary>
@@ -66,21 +72,22 @@ private class TaskRunContext
 	/// </summary>
 	private Task? blockTask = null;
 
-	public TaskRunContext(List<Func<TaskContext, Task>> tasks, LiveDisplayContext ctx, CancellationToken cancellationToken)
+	public TaskRunContext(string title, List<Func<TaskContext, Task>> tasks, LiveDisplayContext ctx, CancellationToken cancellationToken)
 	{
+		this.title = title;
 		taskCount = tasks.Count;
 		taskQueue = new ConcurrentQueue<Func<TaskContext, Task>>(tasks);
 		this.ctx = ctx;
 		this.cancellationToken = cancellationToken;
 		// 首个 widget 总是用于记录进度。
 		widgets = new Markup?[threadCount + 1];
-		widgets[0] = new Markup($"执行任务 [green]0[/]/{taskCount}");
+		widgets[0] = new Markup($"{title} [green]0[/]/{taskCount}");
 	}
 
 	/// <summary>
 	/// 运行当前任务列表。
 	/// </summary>
-	public Task Run()
+	public async Task<Markup> Run()
 	{
 		Task[] tasks = new Task[threadCount];
 		for (int i = 0; i < threadCount; i++)
@@ -89,7 +96,8 @@ private class TaskRunContext
 			int index = i;
 			tasks[i] = RunTask(context);
 		}
-		return Task.WhenAll(tasks);
+		await Task.WhenAll(tasks);
+		return widgets[0]!;
 	}
 
 	/// <summary>
@@ -192,7 +200,7 @@ private class TaskRunContext
 		{
 			Interlocked.Increment(ref failureCount);
 		}
-		var message = $"执行任务 [green]{successCount}[/]/{taskCount}";
+		var message = $"{title} [green]{successCount}[/]/{taskCount}";
 		if (failureCount > 0)
 		{
 			message += $" 失败 [red]{failureCount}[/]";

@@ -2,26 +2,22 @@
  * 备份 calibre 书库。
  */
 
+#load "utils/7z.csx"
 #load "utils/baidu-pan.csx"
 #load "utils/config-holder.csx"
 #load "utils/md5.csx"
 #load "utils/string.csx"
 #r "nuget: Spectre.Console, 0.54.0"
 #r "nuget: Spectre.Console.Cli, 0.53.1"
-#r "nuget: System.Text.Encoding.CodePages, 10.0.5"
 
 #nullable enable
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Spectre.Console;
 using Spectre.Console.Cli;
-
-// 注册 GBK 编码支持。
-Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 var app = new CommandApp<BackupCommand>();
 return await app.RunAsync(Args.ToArray());
@@ -83,10 +79,6 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 	/// 匹配书籍名的正则表达式。
 	/// </summary>
 	private static readonly Regex BookNameRegex = new(@"(.+)\s+\((\d+)\)$");
-	/// <summary>
-	/// 7z 压缩进度的正则表达式。
-	/// </summary>
-	private static readonly Regex SevenZProgressRegex = new(@"^(\d+%)");
 	/// <summary>
 	/// 备份配置。
 	/// </summary>
@@ -369,16 +361,14 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		{
 			File.Delete(backupTempPath);
 		}
-		var args = new List<string>
+		SevenZConfig config = new()
 		{
-			"a", // 添加文件到压缩包
-			"-bsp1", // 输出压缩进度
-			"-mhe", // 加密文件名
-			$"-p{item.Pwd}", // 设置密码
-			backupTempPath,
+			FileName = backupTempPath,
+			WorkingDirectory = dir,
+			Password = item.Pwd,
+			Files = files,
 		};
-		args.AddRange(files);
-		await Compress(args, dir, (progress) =>
+		await Compress(config, (progress) =>
 		{
 			progressCallback?.Invoke("压缩", progress);
 		});
@@ -458,52 +448,6 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 			});
 		}
 		return result;
-	}
-
-	/// <summary>
-	/// 使用指定的参数执行 7z 指令。
-	/// </summary>
-	private async Task Compress(List<string> args, string workingDirectory, Action<string> progressCallback)
-	{
-		using var process = new Process();
-		process.StartInfo = new ProcessStartInfo("7z", args)
-		{
-			WorkingDirectory = workingDirectory,
-			UseShellExecute = false,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-			// 避免乱码
-			StandardOutputEncoding = Encoding.GetEncoding("GBK"),
-			StandardErrorEncoding = Encoding.GetEncoding("GBK"),
-		};
-
-		var errorBuilder = new StringBuilder();
-		process.OutputDataReceived += (sender, e) =>
-		{
-			if (e.Data != null)
-			{
-				var match = SevenZProgressRegex.Match(e.Data.Trim());
-				if (match.Success)
-				{
-					progressCallback(match.Value);
-				}
-			}
-		};
-		process.ErrorDataReceived += (sender, e) =>
-		{
-			if (e.Data != null)
-			{
-				errorBuilder.AppendLine(e.Data);
-			}
-		};
-		process.Start();
-		process.BeginOutputReadLine();
-		process.BeginErrorReadLine();
-		await process.WaitForExitAsync();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception($"压缩失败: {process.ExitCode}, {errorBuilder}");
-		}
 	}
 }
 

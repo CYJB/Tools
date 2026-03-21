@@ -1,0 +1,107 @@
+body {
+  padding: 0;
+  margin: 0;
+  text-align: justify;
+}
+
+p {
+  text-align: justify;
+  text-indent: 2em;
+}
+
+blockquote footer {
+  text-align: right;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+figure {
+  text-align: center;
+  margin-left: 0;
+  margin-right: 0;
+  text-indent: 0;
+}
+
+figure img {
+  max-width: 100%;
+}
+
+figure table {
+  width: 100%;
+}
+
+.cover {
+  width: 100%;
+  padding: 0;
+}
+
+.center {
+  text-align: center;
+  margin-left: 0;
+  margin-right: 0;
+  text-indent: 0;
+}
+
+.left {
+  text-align: left;
+  margin-left: 0;
+  margin-right: 0;
+  text-indent: 0;
+}
+
+.right {
+  text-align: right;
+  margin-left: 0;
+  margin-right: 0;
+  text-indent: 0;
+}
+
+.matchblock td {
+  white-space: nowrap;
+}
+
+.mathblock td:first-child {
+  width: 100%;
+}
+
+h1 {
+  line-height: 130%;
+  text-align: center;
+  font-weight: bold;
+  font-size: xx-large;
+}
+
+h2 {
+  line-height: 130%;
+  text-align: center;
+  font-weight: bold;
+  font-size: x-large;
+}
+
+h3 {
+  line-height: 130%;
+  text-align: center;
+  font-weight: bold;
+  font-size: large;
+}
+
+h4 {
+  line-height: 130%;
+  text-align: center;
+  font-weight: bold;
+  font-size: medium;
+}
+
+h5 {
+  line-height: 130%;
+  text-align: center;
+  font-weight: bold;
+  font-size: small;
+}
+
+h6 {
+  line-height: 130%;
+  text-align: center;
+  font-weight: bold;
+  font-size: x-small;
+}
