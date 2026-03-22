@@ -13,6 +13,7 @@
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.RegularExpressions;
 using System.Threading;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -47,6 +48,18 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		[DefaultValue(false)]
 		public bool Compress { get; init; }
 	}
+
+	/// <summary>
+	/// 漫画名称正则表达式 [{author}] {title}
+	/// </summary>
+	private static readonly Regex ComicNameRegex = new(@"\[(
+		(?>
+			[^\]\[]+
+			| \[ (?<Depth>)
+			| \] (?<-Depth>)
+		)+
+		(?(Depth)(?!))
+	)\][ ](.+)", RegexOptions.IgnorePatternWhitespace);
 
 	/// <summary>
 	/// 执行命令。
@@ -146,12 +159,33 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	{
 		AnsiConsole.MarkupLine($"正在打包 [green]{path.EscapeMarkup()}[/]:");
 		string title = "", author = "";
+		string fileName = Path.GetFileName(path);
+		var match = ComicNameRegex.Match(fileName);
+		if (match.Success)
+		{
+			author = match.Groups[1].Value;
+			title = match.Groups[2].Value;
+		}
 		if (!silent)
 		{
-			var titlePrompt = new TextPrompt<string>("  请输入漫画标题:").DefaultValue("");
+			// 临时绕过
+			// https://github.com/spectreconsole/spectre.console/issues/1181
+			var originValue = title;
+			var escapedValue = title.EscapeMarkup();
+			var titlePrompt = new TextPrompt<string>("  请输入漫画标题:").DefaultValue(escapedValue);
 			title = AnsiConsole.Prompt(titlePrompt);
-			var authorPrompt = new TextPrompt<string>("  请输入漫画作者:").DefaultValue("");
+			if (title == escapedValue)
+			{
+				title = originValue;
+			}
+			originValue = author;
+			escapedValue = author.EscapeMarkup();
+			var authorPrompt = new TextPrompt<string>("  请输入漫画作者:").DefaultValue(escapedValue);
 			author = AnsiConsole.Prompt(authorPrompt);
+			if (author == escapedValue)
+			{
+				author = originValue;
+			}
 		}
 		string targetPath;
 		if (title == "" && author == "")
@@ -209,13 +243,14 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			foreach (var file in files)
 			{
 				string chapterId = Path.GetFileNameWithoutExtension(file);
-				string chapterTitle;
+				string? chapterTitle;
 				bool isCover = IsCoverFile(file);
 				// 使用空格分割 id 和 title。
 				int idx = chapterId.IndexOf(' ');
 				if (idx > 0)
 				{
-					chapterTitle = chapterId[(idx + 1)..];
+					// 总是保留 title 中的序号。
+					chapterTitle = chapterId;
 					chapterId = chapterId[0..idx];
 				}
 				else if (isCover)
@@ -223,7 +258,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 					// 不重复设置封面的标题。
 					if (hasCover)
 					{
-						chapterTitle = "";
+						chapterTitle = null;
 					}
 					else
 					{
