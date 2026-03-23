@@ -50,6 +50,8 @@ static async Task<string> GetAccessTokenAsync()
 	{
 		// AccessToken 已过期，使用 RefreshToken 刷新。
 		await RefreshAccessTokenAsync(config);
+		// 保存配置。
+		configHolder.Save();
 	}
 	return config.AccessToken!;
 }
@@ -140,9 +142,19 @@ static async Task RefreshAccessTokenAsync(Config config)
 	{
 		// 处理非成功状态码（如授权未完成）
 		var error = tokenResult.Error;
-		var errorMsg = $"百度网盘授权刷新失败: {error}";
-		AnsiConsole.MarkupLine($"[red]{errorMsg}[/]");
-		throw new Exception(errorMsg);
+		if (error == "expired_token")
+		{
+			// 刷新 token 过期，重新请求授权。
+			await RequestAccessTokenAsync(config);
+			// 保存配置。
+			configHolder.Save();
+		}
+		else
+		{
+			var errorMsg = $"百度网盘授权刷新失败: {error}";
+			AnsiConsole.MarkupLine($"[red]{errorMsg}[/]");
+			throw new Exception(errorMsg);
+		}
 	}
 }
 
@@ -196,7 +208,7 @@ private class DeviceCodeResult
 	/// DeviceCode 的过期时间，单位：秒。
 	/// </summary>
 	[JsonPropertyName("expires_in")]
-	public int ExpiresIn { get; set; }
+	public long ExpiresIn { get; set; }
 	/// <summary>
 	/// device_code 换 Access Token 轮询间隔时间，单位：秒。
 	/// </summary>
@@ -220,8 +232,7 @@ private class AccessTokenResult
 	/// Access Token 的有效期，单位：秒。
 	/// </summary>
 	[JsonPropertyName("expires_in")]
-	public int ExpiresIn { get; set; }
-
+	public long ExpiresIn { get; set; }
 	/// <summary>
 	/// 授权时的错误信息。
 	/// </summary>
