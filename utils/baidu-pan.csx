@@ -21,10 +21,6 @@ public class BaiduPan
 	private const string FileAPI = "https://pan.baidu.com/rest/2.0/xpan/file";
 	private const string PcsFileAPI = "https://d.pcs.baidu.com/rest/2.0/pcs/file";
 	private const string SuperFile2Path = "/rest/2.0/pcs/superfile2";
-	/// <summary>
-	/// 上传分片大小。
-	/// </summary>
-	private const int BlockSize = 4 * 1024 * 1024;
 	private static readonly HttpClient httpClient = new();
 
 	/// <summary>
@@ -59,6 +55,12 @@ public class BaiduPan
 			}
 			else
 			{
+				var errno = root.GetProperty("errno").GetInt32();
+				if (errno == -9)
+				{
+					// 目录不存在，返回空路径。
+					return result;
+				}
 				throw GetErrnoException(root.GetProperty("errno").GetInt32(), dir);
 			}
 		}
@@ -74,111 +76,10 @@ public class BaiduPan
 	public async Task Upload(string uploadPath, string filePath, Action<float>? progressCallback = null)
 	{
 		string accessToken = await GetAccessTokenAsync();
-		var fileInfo = new FileInfo(filePath);
-		var fileSize = fileInfo.Length;
-		FileBlock[] blocks = await GetFileBlocks(filePath, BlockSize);
-		var blockList = JsonSerializer.Serialize(blocks.Select(block => block.MD5))!;
-		// 1. 预上传
-		var requestBody = new FormUrlEncodedContent([
-			new("path", uploadPath),
-			new("size", fileSize.ToString()),
-			new("isdir", "0"),
-			new("block_list", blockList),
-			new("autoinit", "1"),
-			new("rtype", "1"),
-			new("local_ctime", new DateTimeOffset(fileInfo.CreationTime).ToUnixTimeMilliseconds().ToString()),
-		]);
-		var response = await httpClient.PostAsync(FileAPI + BuildUriQuery(new() {
-			{ "method", "precreate" },
-			{ "access_token", accessToken },
-		}), requestBody);
-		var json = await response.Content.ReadAsStringAsync();
-		var preCreateResult = JsonSerializer.Deserialize<PreCreateResult>(json)!;
-		if (preCreateResult.Errno != 0)
-		{
-			throw GetErrnoException(preCreateResult.Errno, uploadPath);
-		}
-		var uploadId = preCreateResult.UploadId;
-
-		// 2. 分片上传
-		UploadResult uploadResult;
-		using (FileStream fs = new(filePath, FileMode.Open, FileAccess.Read))
-		{
-			byte[] buffer = new byte[BlockSize];
-			float uploadedSize = 0;
-			for (int i = 0; i < blocks.Length; i++)
-			{
-				// 2.a 获取上传域名。
-				json = await httpClient.GetStringAsync(PcsFileAPI + BuildUriQuery(new()
-				{
-					{ "method", "locateupload" },
-					{ "appid", "250528" },
-					{ "access_token", accessToken },
-					{ "path", uploadPath },
-					{ "uploadid", uploadId },
-					{ "upload_version", "2.0" },
-				}));
-				var locateResult = JsonSerializer.Deserialize<LocateUploadResult>(json)!;
-				var server = locateResult.Servers[0].Server;
-
-				// 2.b 上传分片。
-				var content = new MultipartFormDataContent();
-				var block = blocks[i];
-				fs.Seek(block.Offset, SeekOrigin.Begin);
-				var size = await fs.ReadAsync(buffer);
-				var fileContent = new ByteArrayContent(buffer, 0, size);
-				fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-				content.Add(fileContent, "file", "tmpfile");
-				response = await httpClient.PostAsync(server + SuperFile2Path + BuildUriQuery(new()
-				{
-					{ "method", "upload" },
-					{ "access_token", accessToken },
-					{ "type", "tmpfile" },
-					{ "path", uploadPath },
-					{ "uploadid", uploadId },
-					{ "partseq", i.ToString() },
-				}), content);
-				var stream = response.Content.ReadAsStream();
-				using (var reader = new StreamReader(stream))
-				{
-					uploadResult = JsonSerializer.Deserialize<UploadResult>(await reader.ReadToEndAsync())!;
-					if (uploadResult.Errno != null)
-					{
-						throw GetErrnoException(uploadResult.Errno.Value, $"{uploadPath}[{i}");
-					}
-					else if (uploadResult.MD5 != blocks[i].MD5)
-					{
-						throw new Exception($"上传 {uploadPath}[{i}] 异常：MD5 {uploadResult.MD5} 与预期 {blocks[i].MD5} 不符");
-					}
-				}
-
-				uploadedSize += size;
-				progressCallback?.Invoke(uploadedSize * 100 / fileSize);
-			}
-		}
-
-		await Task.Delay(1000);
-
-		// 3. 合并文件
-		requestBody = new FormUrlEncodedContent([
-			new("path", uploadPath),
-			new("size", fileSize.ToString()),
-			new("isdir", "0"),
-			new("block_list", blockList),
-			new("uploadid", uploadId),
-			new("rtype", "1"),
-		]);
-		response = await httpClient.PostAsync(FileAPI + BuildUriQuery(new() {
-			{ "method", "create" },
-			{ "access_token", accessToken },
-		}), requestBody);
-		json = await response.Content.ReadAsStringAsync();
-		uploadResult = JsonSerializer.Deserialize<UploadResult>(json)!;
-		if (uploadResult.Errno != null && uploadResult.Errno.Value != 0)
-		{
-			throw GetErrnoException(uploadResult.Errno.Value, uploadPath);
-		}
+		UploadContext context = new(accessToken, uploadPath, filePath);
+		await context.Upload(progressCallback);
 	}
+
 	/// <summary>
 	/// 删除指定文件。
 	/// </summary>
@@ -189,20 +90,164 @@ public class BaiduPan
 			return;
 		}
 		string accessToken = await GetAccessTokenAsync();
+		var url = FileAPI + BuildUriQuery(new() {
+			{ "method", "filemanager" },
+			{ "access_token", accessToken },
+			{ "opera", "delete" },
+		});
 		var requestBody = new FormUrlEncodedContent([
 			new("async", "2"),
 			new("filelist", JsonSerializer.Serialize(path)),
 		]);
-		var response = await httpClient.PostAsync(FileAPI + BuildUriQuery(new() {
-			{ "method", "filemanager" },
-			{ "access_token", accessToken },
-			{ "opera", "delete" },
-		}), requestBody);
-		var json = await response.Content.ReadAsStringAsync();
-		var info = JsonSerializer.Deserialize<FileManagerResult>(json)!;
-		if (info.Errno != 0)
+		FileManagerResult result = await PostJsonAsync<FileManagerResult>(httpClient, url, requestBody);
+		if (result.Errno != 0)
 		{
-			throw GetErrnoException(info.Errno, path[0]);
+			throw GetErrnoException(result.Errno, path[0]);
+		}
+	}
+
+	/// <summary>
+	/// 上传上下文。
+	/// </summary>
+	private class UploadContext(string accessToken, string uploadPath, string filePath)
+	{
+		/// <summary>
+		/// 上传分片大小。
+		/// </summary>
+		private const int BlockSize = 4 * 1024 * 1024;
+
+		private readonly string accessToken = accessToken;
+		private readonly string uploadPath = uploadPath;
+		private readonly string filePath = filePath;
+		private readonly HttpClient httpClient = new()
+		{
+			// 将超时设置为 5 分钟。
+			Timeout = TimeSpan.FromMinutes(5)
+		};
+		private readonly byte[] buffer = new byte[BlockSize];
+		private long fileSize;
+		private string uploadId = "";
+		private string server = "";
+
+		/// <summary>
+		/// 上传当前文件。
+		/// </summary>
+		/// <returns></returns>
+		public async Task Upload(Action<float>? progressCallback)
+		{
+			FileBlock[] blocks = await GetFileBlocks(filePath, BlockSize);
+			var blockList = JsonSerializer.Serialize(blocks.Select(block => block.MD5))!;
+			// 1. 预上传
+			uploadId = await Precreate(blockList);
+			// 2. 获取上传域名。
+			server = await GetServer();
+			// 3. 分片上传
+			using (FileStream fs = new(filePath, FileMode.Open, FileAccess.Read))
+			{
+				float uploadedSize = 0;
+				for (int i = 0; i < blocks.Length; i++)
+				{
+					uploadedSize += await UploadBlock(i, fs, blocks[i]);
+					progressCallback?.Invoke(uploadedSize * 100 / fileSize);
+				}
+			}
+
+			await Task.Delay(500);
+
+			// 4. 合并文件
+			var url = FileAPI + BuildUriQuery(new() {
+				{ "method", "create" },
+				{ "access_token", accessToken },
+			});
+			var requestBody = new FormUrlEncodedContent([
+				new("path", uploadPath),
+				new("size", fileSize.ToString()),
+				new("isdir", "0"),
+				new("block_list", blockList),
+				new("uploadid", uploadId),
+				new("rtype", "1"),
+			]);
+			UploadResult result = await PostJsonAsync<UploadResult>(httpClient, url, requestBody);
+			if (result.Errno != null && result.Errno.Value != 0)
+			{
+				throw GetErrnoException(result.Errno.Value, uploadPath);
+			}
+		}
+
+		/// <summary>
+		/// 预上传。
+		/// </summary>
+		private async Task<string> Precreate(string blockList)
+		{
+			var fileInfo = new FileInfo(filePath);
+			fileSize = fileInfo.Length;
+			var requestUrl = FileAPI + BuildUriQuery(new() {
+				{ "method", "precreate" },
+				{ "access_token", accessToken },
+			});
+			var requestBody = new FormUrlEncodedContent([
+				new("path", uploadPath),
+				new("size", fileSize.ToString()),
+				new("isdir", "0"),
+				new("block_list", blockList),
+				new("autoinit", "1"),
+				new("rtype", "1"),
+				new("local_ctime", new DateTimeOffset(fileInfo.CreationTime).ToUnixTimeMilliseconds().ToString()),
+			]);
+			PreCreateResult result = await PostJsonAsync<PreCreateResult>(httpClient, requestUrl, requestBody);
+			if (result.Errno != 0)
+			{
+				throw GetErrnoException(result.Errno, uploadPath);
+			}
+			return result.UploadId;
+		}
+
+		/// <summary>
+		/// 获取上传域名。
+		/// </summary>
+		private async Task<string> GetServer()
+		{
+			string url = PcsFileAPI + BuildUriQuery(new() {
+				{ "method", "locateupload" },
+				{ "appid", "250528" },
+				{ "access_token", accessToken },
+				{ "path", uploadPath },
+				{ "uploadid", uploadId },
+				{ "upload_version", "2.0" },
+			});
+			LocateUploadResult result = await GetJsonAsync<LocateUploadResult>(httpClient, url);
+			return result.Servers[0].Server;
+		}
+
+		/// <summary>
+		/// 上传分片。
+		/// </summary>
+		private async Task<int> UploadBlock(int partSeq, FileStream fs, FileBlock block)
+		{
+			var url = server + SuperFile2Path + BuildUriQuery(new() {
+				{ "method", "upload" },
+				{ "access_token", accessToken },
+				{ "type", "tmpfile" },
+				{ "path", uploadPath },
+				{ "uploadid", uploadId },
+				{ "partseq", partSeq.ToString() },
+			});
+			var content = new MultipartFormDataContent();
+			fs.Seek(block.Offset, SeekOrigin.Begin);
+			var size = await fs.ReadAsync(buffer);
+			var fileContent = new ByteArrayContent(buffer, 0, size);
+			fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+			content.Add(fileContent, "file", "tmpfile");
+			UploadResult result = await PostJsonAsync<UploadResult>(httpClient, url, content);
+			if (result.Errno != null)
+			{
+				throw GetErrnoException(result.Errno.Value, $"{uploadPath}[{partSeq}");
+			}
+			else if (result.MD5 != block.MD5)
+			{
+				throw new Exception($"上传 {uploadPath}[{partSeq}] 异常：MD5 {result.MD5} 与预期 {block.MD5} 不符");
+			}
+			return size;
 		}
 	}
 }

@@ -59,7 +59,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			| \] (?<-Depth>)
 		)+
 		(?(Depth)(?!))
-	)\][ ](.+)", RegexOptions.IgnorePatternWhitespace);
+	)\]([ \[].+)", RegexOptions.IgnorePatternWhitespace);
 
 	/// <summary>
 	/// 执行命令。
@@ -164,7 +164,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		if (match.Success)
 		{
 			author = match.Groups[1].Value;
-			title = match.Groups[2].Value;
+			title = match.Groups[2].Value.Trim();
 		}
 		if (!silent)
 		{

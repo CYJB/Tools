@@ -3,6 +3,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.Unicode;
 
 /// <summary>
@@ -16,9 +17,10 @@ public class ConfigHolder<T>
 	/// </summary>
 	private static readonly JsonSerializerOptions Options = new()
 	{
+		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault,
+		Encoder = JavaScriptEncoder.Create(UnicodeRanges.All, UnicodeRanges.Cyrillic),
 		PropertyNameCaseInsensitive = true,
 		WriteIndented = true,
-		Encoder = JavaScriptEncoder.Create(UnicodeRanges.All, UnicodeRanges.Cyrillic),
 	};
 
 	/// <summary>

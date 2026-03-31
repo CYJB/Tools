@@ -26,6 +26,10 @@ class EPubMetadata
 	/// </summary>
 	private readonly XmlElement spineNode;
 	/// <summary>
+	/// 元数据 ID。
+	/// </summary>
+	private int metaIdx = 1;
+	/// <summary>
 	/// 是否已设置封面。
 	/// </summary>
 	private bool hasCover = false;
@@ -64,6 +68,14 @@ class EPubMetadata
 		spineNode = EPubXml.CreateOPFElement(document, "spine");
 		spineNode.SetAttribute("toc", "ncx");
 		package.AppendChild(spineNode);
+	}
+
+	/// <summary>
+	/// 添加排序作者。
+	/// </summary>
+	public void AddAuthorSort(string authorSort)
+	{
+		AddCustomMeta("aut", authorSort);
 	}
 
 	/// <summary>
@@ -108,5 +120,25 @@ class EPubMetadata
 	public void WriteTo(XmlWriter writer)
 	{
 		document.WriteTo(writer);
+	}
+
+	/// <summary>
+	/// 添加自定义元数据。
+	/// </summary>
+	private void AddCustomMeta(string name, string value)
+	{
+		var id = $"#id-{metaIdx++}";
+		var relators = document.CreateElement("opf:meta");
+		relators.SetAttribute("refines", id);
+		relators.SetAttribute("property", "role");
+		relators.SetAttribute("scheme", "marc:relators");
+		relators.InnerText = name;
+		metadataNode.AppendChild(relators);
+
+		var valueNode = document.CreateElement("opf:meta");
+		valueNode.SetAttribute("refines", id);
+		valueNode.SetAttribute("property", "file-as");
+		valueNode.InnerText = value;
+		metadataNode.AppendChild(valueNode);
 	}
 }
