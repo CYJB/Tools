@@ -50,6 +50,10 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	}
 
 	/// <summary>
+	/// 触发图片压缩的阈值，10MiB。
+	/// </summary>
+	private const long CompressThreshold = 10 * 1024 * 1024;
+	/// <summary>
 	/// 漫画名称正则表达式 [{author}] {title}
 	/// </summary>
 	private static readonly Regex ComicNameRegex = new(@"\[(
@@ -200,7 +204,24 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		string[] files = Directory.GetFiles(path);
 		if (compress)
 		{
-			var tasks = await GetCompressTasksAsync(path);
+			long fileSize = 0;
+			foreach (var file in files)
+			{
+				fileSize += new FileInfo(file).Length;
+			}
+			List<Func<TaskContext, Task>> tasks;
+			if (fileSize > CompressThreshold)
+			{
+				tasks = await GetCompressTasksAsync(path, null, new CompressConfig()
+				{
+					// 尺寸要超出 20% 才触发压缩。
+					Oversize = 0.2,
+				});
+			}
+			else
+			{
+				tasks = [];
+			}
 			if (tasks.Count > 0)
 			{
 				// 将图片备份为 7z。

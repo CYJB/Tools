@@ -78,6 +78,10 @@ private class CompressContext
 	/// </summary>
 	private readonly Size videoSize;
 	/// <summary>
+	/// 超出大小的比例。
+	/// </summary>
+	private readonly double oversize = 0;
+	/// <summary>
 	/// 码率限制。
 	/// </summary>
 	private readonly int videoBitRate;
@@ -148,6 +152,10 @@ private class CompressContext
 					defaultConfig.Recursion = config.Recursion;
 				}
 			}
+			if (config.Oversize > 0)
+			{
+				oversize = config.Oversize;
+			}
 			if (save)
 			{
 				configHolder.Save();
@@ -216,7 +224,7 @@ private class CompressContext
 				var info = new MagickImageInfo(file);
 				int width = (int)info.Width;
 				int height = (int)info.Height;
-				if (imageSize.NeedCompress(ref width, ref height))
+				if (imageSize.NeedCompress(ref width, ref height, oversize))
 				{
 					return CompressImageAsync(file, desc, width, height);
 				}
@@ -231,7 +239,7 @@ private class CompressContext
 					int width = videoStream.Width;
 					int height = videoStream.Height;
 					// 码率高于指定值（默认 10Mb/s）的也总是触发压缩。
-					if (videoSize.NeedCompress(ref width, ref height, videoStream.Bitrate > videoBitRate))
+					if (videoSize.NeedCompress(ref width, ref height, oversize, videoStream.Bitrate > videoBitRate))
 					{
 						return CompressVideoAsync(file, desc, width, height);
 					}
@@ -319,6 +327,11 @@ public class CompressConfig
 	/// 是否递归处理子目录。
 	/// </summary>
 	public bool? Recursion { get; set; }
+
+	/// <summary>
+	/// 需要超过目标尺寸比例，高于此比例的才会触发压缩。
+	/// </summary>
+	public double Oversize { get; set; } = 0;
 }
 
 /// <summary>
@@ -371,16 +384,23 @@ readonly struct Size
 	/// <summary>
 	/// 检查指定文件的压缩配置。
 	/// </summary>
-	public bool NeedCompress(ref int width, ref int height, bool forceCompress = false)
+	public bool NeedCompress(ref int width, ref int height, double oversize = 0, bool forceCompress = false)
 	{
-		if (width <= maxWidth && height <= maxHeight)
+		int targetWidth = maxWidth;
+		int targetHeight = maxHeight;
+		if (oversize > 0)
+		{
+			targetWidth += (int)(maxWidth * oversize);
+			targetHeight += (int)(maxHeight * oversize);
+		}
+		if (width <= targetWidth && height <= targetHeight)
 		{
 			return forceCompress;
 		}
 		double scale;
 		if (width < height && rotate)
 		{
-			if (height <= maxWidth && width <= maxHeight)
+			if (height <= targetWidth && width <= targetHeight)
 			{
 				return forceCompress;
 			}
