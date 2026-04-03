@@ -720,6 +720,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				else
 				{
 					isChanged = true;
+					info.MD5 = fileMD5;
 				}
 				files.Add(name, info);
 			}
