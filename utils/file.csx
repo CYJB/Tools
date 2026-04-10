@@ -23,7 +23,10 @@ static bool IsCoverFile(string path)
 	{
 		return int.TryParse(fileName[..idx], out var value) && value == 0;
 	}
-	return false;
+	else
+	{
+		return int.TryParse(fileName, out var value) && value == 0;
+	}
 }
 
 /// <summary>

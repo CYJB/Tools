@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<OutputType>WinExe</OutputType>
+	<TargetFramework>net6.0-windows</TargetFramework>
+	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Authors>CYJB</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageReference Include="OllamaSharp" Version="5.4.25" />
+	<PackageReference Include="Spectre.Console" Version="0.54.0" />
+	<PackageReference Include="Spectre.Console.Cli" Version="0.53.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Compile Include="../recognize-content.csx" />
+	<Compile Include="../utils/config-holder.csx" />
+  </ItemGroup>
+
+</Project>

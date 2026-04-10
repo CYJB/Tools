@@ -14,6 +14,8 @@
 
 - `-s, --silent`：静默打包，不询问作者和标题。
 - `-c, --compress`：压缩漫画，减少 epub 尺寸；原图片会压缩为 7z。
+- `-a, --auto-add`：自动添加到之前指定的 Calibre 数据库中。
+- `--calibre-library`：将 epub 直接添加到指定 calibre 库，支持本地数据库路径，或内容服务器地址。
 
 常见用法：
 
@@ -51,4 +53,4 @@ myComics/
     └── 03.jpg
 ```
 
-会将目录内的 `myComic1` 和 `myComic2` 分别打包为。
+会将目录内的 `myComic1` 和 `myComic2` 分别打包为 epub。

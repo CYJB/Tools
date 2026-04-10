@@ -45,6 +45,10 @@ public class EPubExporter : IEPubExporter
 	/// </summary>
 	private readonly string author;
 	/// <summary>
+	/// 文件路径。
+	/// </summary>
+	private readonly string filePath;
+	/// <summary>
 	/// 文件流。
 	/// </summary>
 	private readonly FileStream fileStream;
@@ -81,6 +85,7 @@ public class EPubExporter : IEPubExporter
 	{
 		this.title = title;
 		this.author = author;
+		this.filePath = filePath;
 		fileStream = new FileStream(filePath, FileMode.Create);
 		archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
 		metadata = new EPubMetadata(uuid, title, author);
@@ -103,6 +108,19 @@ public class EPubExporter : IEPubExporter
 		metadata.AddManifest("css", MainStylePath, "text/css");
 		metadata.AddManifest("ncx", NavigationPath, "application/x-dtbncx+xml");
 	}
+
+	/// <summary>
+	/// 获取电子书的标题。
+	/// </summary>
+	public string Title => title;
+	/// <summary>
+	/// 获取电子书的作者。
+	/// </summary>
+	public string Author => author;
+	/// <summary>
+	/// 获取输出文件路径。
+	/// </summary>
+	public string FilePath => filePath;
 
 	/// <summary>
 	/// 添加指定的页面。

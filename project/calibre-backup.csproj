@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<OutputType>WinExe</OutputType>
+	<TargetFramework>net6.0-windows</TargetFramework>
+	<Nullable>enable</Nullable>
+	<Authors>CYJB</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageReference Include="Spectre.Console" Version="0.54.0" />
+	<PackageReference Include="Spectre.Console.Cli" Version="0.53.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Compile Include="../calibre-backup.csx" />
+	<Compile Include="../utils/7z.csx" />
+	<Compile Include="../utils/code-pages.csx" />
+	<Compile Include="../utils/baidu-pan.csx" />
+	<Compile Include="../utils/config-holder.csx" />
+	<Compile Include="../utils/md5.csx" />
+	<Compile Include="../utils/string.csx" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<OutputType>WinExe</OutputType>
+	<TargetFramework>net6.0-windows</TargetFramework>
+	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Authors>CYJB</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageReference Include="Spectre.Console" Version="0.54.0" />
+	<PackageReference Include="Spectre.Console.Cli" Version="0.53.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Compile Include="../pack-epub.csx" />
+	<Compile Include="../utils/7z.csx" />
+	<Compile Include="../utils/calibre.csx" />
+	<Compile Include="../utils/compress.csx" />
+	<Compile Include="../utils/config-holder.csx" />
+	<Compile Include="../utils/epub/exporter.csx" />
+	<Compile Include="../utils/file.csx" />
+	<Compile Include="../utils/task.csx" />
+  </ItemGroup>
+
+</Project>

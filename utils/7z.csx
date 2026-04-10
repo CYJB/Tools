@@ -1,12 +1,9 @@
-#r "nuget: System.Text.Encoding.CodePages, 10.0.5"
+#load "code-pages.csx"
 
 #nullable enable
 
 using System.Text;
 using System.Text.RegularExpressions;
-
-// 注册 GBK 编码支持。
-Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 /// <summary>
 /// 7z 压缩进度的正则表达式。

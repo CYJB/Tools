@@ -2,7 +2,9 @@
  * 打包 epub，支持文本（小说）或只包含图片的目录（漫画）。
  */
 #load "utils/7z.csx"
+#load "utils/calibre.csx"
 #load "utils/compress.csx"
+#load "utils/config-holder.csx"
 #load "utils/epub/exporter.csx"
 #load "utils/file.csx"
 #load "utils/task.csx"
@@ -47,6 +49,15 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		[CommandOption("-c|--compress ")]
 		[DefaultValue(false)]
 		public bool Compress { get; init; }
+
+		[Description("将 epub 直接添加到指定 calibre 库，支持本地数据库路径，或内容服务器地址。")]
+		[CommandOption("--calibre-library")]
+		public string? CalibreLibrary { get; init; }
+
+		[Description("自动添加到之前指定的 Calibre 数据库中。")]
+		[CommandOption("-a|--auto-add ")]
+		[DefaultValue(false)]
+		public bool AutoAdd { get; init; }
 	}
 
 	/// <summary>
@@ -54,9 +65,9 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	/// </summary>
 	private const long CompressThreshold = 10 * 1024 * 1024;
 	/// <summary>
-	/// 漫画名称正则表达式 [{author}] {title}
+	/// 书籍名的正则表达式 [{author}] {title}
 	/// </summary>
-	private static readonly Regex ComicNameRegex = new(@"\[(
+	private static readonly Regex FileNameRegex = new(@"\[(
 		(?>
 			[^\]\[]+
 			| \[ (?<Depth>)
@@ -64,6 +75,18 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		)+
 		(?(Depth)(?!))
 	)\]([ \[].+)", RegexOptions.IgnorePatternWhitespace);
+	/// <summary>
+	/// 作者国籍的正则表达式。
+	/// </summary>
+	private static readonly Regex AuthorCountryRegex = new(@"^\[.\]");
+	/// <summary>
+	/// 配置。
+	/// </summary>
+	private static ConfigHolder<Config> configHolder = new();
+	/// <summary>
+	/// 作者映射表。
+	/// </summary>
+	private static Dictionary<string, string> authorMap = [];
 
 	/// <summary>
 	/// 执行命令。
@@ -71,6 +94,17 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	public override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
 	{
 		var targetPath = settings.Path ?? Directory.GetCurrentDirectory();
+		Calibre? calibre = null;
+		if (settings.CalibreLibrary != null)
+		{
+			calibre = new Calibre(settings.CalibreLibrary);
+			configHolder.Config.CalibreLibrary = settings.CalibreLibrary;
+			configHolder.Save();
+		}
+		else if (settings.AutoAdd && configHolder.Config.CalibreLibrary != null)
+		{
+			calibre = new Calibre(configHolder.Config.CalibreLibrary);
+		}
 		var silent = settings.Silent;
 		var compress = settings.Compress;
 		List<PackTask> tasks = [];
@@ -83,9 +117,22 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		{
 			foreach (var task in tasks)
 			{
+				var path = task.Path;
+				AnsiConsole.MarkupLine($"正在打包 [green]{path.EscapeMarkup()}[/]:");
+				var (author, title) = DetectBookInfo(Path.GetFileName(path), silent);
+				string epubPath;
+				if (title == "" && author == "")
+				{
+					epubPath = path + ".epub";
+				}
+				else
+				{
+					epubPath = Path.Combine(Path.GetDirectoryName(path) ?? "", $"[{author}] {title}.epub");
+				}
+				EPubExporter exporter = new(epubPath, title, author);
 				if (task.Type == PackType.Comic)
 				{
-					await PackComic(task.Path, silent, compress);
+					await PackComic(task.Path, exporter, compress, calibre);
 				}
 				else
 				{
@@ -157,14 +204,12 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	}
 
 	/// <summary>
-	/// 打包漫画。
+	/// 检测书籍信息。
 	/// </summary>
-	private async Task PackComic(string path, bool silent, bool compress)
+	private static (string author, string title) DetectBookInfo(string fileName, bool silent)
 	{
-		AnsiConsole.MarkupLine($"正在打包 [green]{path.EscapeMarkup()}[/]:");
 		string title = "", author = "";
-		string fileName = Path.GetFileName(path);
-		var match = ComicNameRegex.Match(fileName);
+		var match = FileNameRegex.Match(fileName);
 		if (match.Success)
 		{
 			author = match.Groups[1].Value;
@@ -176,7 +221,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			// https://github.com/spectreconsole/spectre.console/issues/1181
 			var originValue = title;
 			var escapedValue = title.EscapeMarkup();
-			var titlePrompt = new TextPrompt<string>("  请输入漫画标题:").DefaultValue(escapedValue);
+			var titlePrompt = new TextPrompt<string>("  请输入标题:").DefaultValue(escapedValue);
 			title = AnsiConsole.Prompt(titlePrompt);
 			if (title == escapedValue)
 			{
@@ -184,23 +229,22 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			}
 			originValue = author;
 			escapedValue = author.EscapeMarkup();
-			var authorPrompt = new TextPrompt<string>("  请输入漫画作者:").DefaultValue(escapedValue);
+			var authorPrompt = new TextPrompt<string>("  请输入作者:").DefaultValue(escapedValue);
 			author = AnsiConsole.Prompt(authorPrompt);
 			if (author == escapedValue)
 			{
 				author = originValue;
 			}
 		}
-		string targetPath;
-		if (title == "" && author == "")
-		{
-			targetPath = path + ".epub";
-		}
-		else
-		{
-			targetPath = Path.Combine(Path.GetDirectoryName(path) ?? "", $"[{author}] {title}.epub");
-		}
-		EPubExporter exporter = new(targetPath, title, author);
+		return (author, title);
+	}
+
+	/// <summary>
+	/// 打包漫画。
+	/// </summary>
+	private async Task PackComic(string path, EPubExporter exporter, bool compress, Calibre? calibre)
+	{
+		List<string> generatedFiles = [exporter.FilePath];
 		string[] files = Directory.GetFiles(path);
 		if (compress)
 		{
@@ -225,9 +269,11 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			if (tasks.Count > 0)
 			{
 				// 将图片备份为 7z。
+				var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".7z");
+				generatedFiles.Add(sevenZPath);
 				SevenZConfig config = new()
 				{
-					FileName = Path.ChangeExtension(targetPath, ".7z"),
+					FileName = sevenZPath,
 					WorkingDirectory = Path.GetDirectoryName(path)!,
 					Files = files,
 				};
@@ -309,7 +355,29 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			}
 			exporter.Finish();
 		});
+		if (calibre != null)
+		{
+			var id = await calibre.Add(generatedFiles, new CalibreBookOptions()
+			{
+				Title = exporter.Title,
+				Authors = exporter.Author,
+				Automerge = "new_record",
+			});
+			AnsiConsole.MarkupLine($"已添加 [green]{id}[/]");
+		}
 	}
+
+	/// <summary>
+	/// 配置。
+	/// </summary>
+	private class Config
+	{
+		/// <summary>
+		/// Calibre 数据库。
+		/// </summary>
+		public string? CalibreLibrary { get; set; }
+	}
+
 
 	/// <summary>
 	/// 打包类型。
