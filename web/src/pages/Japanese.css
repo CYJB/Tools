@@ -1,0 +1,207 @@
+.jp-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.jp-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.jp-header h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  color: #1a1a1a;
+}
+.jp-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+}
+
+.jp-textarea {
+  width: 100%;
+  padding: 12px;
+  font-size: 18px;
+  line-height: 1.6;
+  border: 1.5px solid #d1d5db;
+  border-radius: 8px;
+  resize: vertical;
+  font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.jp-textarea:focus {
+  border-color: #6366f1;
+}
+
+.jp-controls {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+
+.jp-toggle {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1.5px solid #d1d5db;
+  background: #f9fafb;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  font-family: inherit;
+}
+.jp-toggle.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+.jp-toggle:hover:not(.active) {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.jp-shortcut {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.55;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0;
+}
+.jp-toggle.active .jp-shortcut {
+  opacity: 0.7;
+}
+
+/* ── keyboard ── */
+.jp-keyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  user-select: none;
+}
+
+.jp-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+}
+
+.jp-key {
+  position: relative;
+  min-width: 56px;
+  height: 62px;
+  padding: 2px 4px 2px;
+  border-radius: 7px;
+  border: 1.5px solid #d1d5db;
+  background: #fff;
+  font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  transition: background 0.1s, border-color 0.1s, transform 0.08s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  color: #1a1a1a;
+}
+.jp-key:hover {
+  background: #f0f0ff;
+  border-color: #6366f1;
+}
+.jp-key:active {
+  transform: translateY(1px);
+  background: #e0e0ff;
+}
+.jp-key.shifted {
+  background: #eff6ff;
+  border-color: #60a5fa;
+}
+
+/* 右上角：Shift 假名提示 */
+.jp-key-top {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 11px;
+  color: #9ca3af;
+  line-height: 1;
+  font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif;
+}
+
+/* 中央主假名 */
+.jp-key-main {
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+/* 左下角英文字母 */
+.jp-key-en {
+  position: absolute;
+  bottom: 3px;
+  left: 5px;
+  font-size: 10px;
+  color: #adb5bd;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1;
+  font-weight: 500;
+}
+
+.jp-shift {
+  min-width: 60px;
+  font-size: 14px;
+}
+.jp-shift-left {
+  min-width: 84px;
+}
+.jp-shift-right {
+  min-width: 84px;
+}
+.jp-shift.active {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+.jp-shift.locked {
+  background: #4f46e5;
+  border-color: #4338ca;
+  color: #fff;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.jp-row-indent {
+  padding-left: 28px;
+}
+
+.jp-backspace {
+  min-width: 76px;
+  font-size: 16px;
+}
+
+.jp-space {
+  flex: 1;
+  max-width: 380px;
+  font-size: 13px;
+}
+
+.jp-enter {
+  min-width: 72px;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .jp-key {
+    min-width: 28px;
+    height: 50px;
+  }
+  .jp-key-main { font-size: 15px; }
+  .jp-key-en { font-size: 9px; }
+  .jp-key-top { font-size: 9px; }
+  .jp-shift, .jp-backspace { min-width: 40px; }
+  .jp-enter { min-width: 52px; }
+}
