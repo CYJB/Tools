@@ -462,6 +462,7 @@ class Calibre
 		{
 			if (!string.IsNullOrEmpty(e.Data))
 			{
+				Console.WriteLine("> error {0}", e.Data);
 				errorBuilder.Append(e.Data);
 			}
 		};

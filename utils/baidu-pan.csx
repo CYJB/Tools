@@ -7,6 +7,7 @@
 #r "nuget: Spectre.Console, 0.54.0"
 #nullable enable
 
+using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;

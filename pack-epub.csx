@@ -67,7 +67,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	/// <summary>
 	/// 书籍名的正则表达式 [{author}] {title}
 	/// </summary>
-	private static readonly Regex FileNameRegex = new(@"\[(
+	private static readonly Regex FileNameRegex = new(@"^\[(
 		(?>
 			[^\]\[]+
 			| \[ (?<Depth>)
@@ -76,17 +76,13 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		(?(Depth)(?!))
 	)\]([ \[].+)", RegexOptions.IgnorePatternWhitespace);
 	/// <summary>
-	/// 作者国籍的正则表达式。
+	/// 索引的正则表达式。
 	/// </summary>
-	private static readonly Regex AuthorCountryRegex = new(@"^\[.\]");
+	private static readonly Regex IndexRegex = new(@"^[\d\d-_]+$");
 	/// <summary>
 	/// 配置。
 	/// </summary>
-	private static ConfigHolder<Config> configHolder = new();
-	/// <summary>
-	/// 作者映射表。
-	/// </summary>
-	private static Dictionary<string, string> authorMap = [];
+	private static readonly ConfigHolder<Config> configHolder = new();
 
 	/// <summary>
 	/// 执行命令。
@@ -101,8 +97,13 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			configHolder.Config.CalibreLibrary = settings.CalibreLibrary;
 			configHolder.Save();
 		}
-		else if (settings.AutoAdd && configHolder.Config.CalibreLibrary != null)
+		else if (settings.AutoAdd)
 		{
+			if (configHolder.Config.CalibreLibrary == null)
+			{
+				var library = AnsiConsole.Ask<string>("请输入 calibre 数据库的[green]本地路径或服务器地址[/]:");
+				configHolder.Config.CalibreLibrary = library;
+			}
 			calibre = new Calibre(configHolder.Config.CalibreLibrary);
 		}
 		var silent = settings.Silent;
@@ -118,16 +119,22 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			foreach (var task in tasks)
 			{
 				var path = task.Path;
-				AnsiConsole.MarkupLine($"正在打包 [green]{path.EscapeMarkup()}[/]:");
+				AnsiConsole.MarkupLine($"正在打包 [green]{path.EscapeMarkup()}[/]");
 				var (author, title) = DetectBookInfo(Path.GetFileName(path), silent);
 				string epubPath;
+				string dirPath = Path.GetDirectoryName(path)!;
+				if (dirPath.Length == 0)
+				{
+					// 无目录，使用当前路径。
+					dirPath = Directory.GetCurrentDirectory();
+				}
 				if (title == "" && author == "")
 				{
-					epubPath = path + ".epub";
+					epubPath = Path.Combine(dirPath, path + ".epub");
 				}
 				else
 				{
-					epubPath = Path.Combine(Path.GetDirectoryName(path) ?? "", $"[{author}] {title}.epub");
+					epubPath = Path.Combine(dirPath, $"[{author}] {title}.epub");
 				}
 				EPubExporter exporter = new(epubPath, title, author);
 				if (task.Type == PackType.Comic)
@@ -244,44 +251,22 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	/// </summary>
 	private async Task PackComic(string path, EPubExporter exporter, bool compress, Calibre? calibre)
 	{
-		List<string> generatedFiles = [exporter.FilePath];
-		string[] files = Directory.GetFiles(path);
+		List<string> generatedFiles = new() { exporter.FilePath };
+		string[] files = Directory.GetFiles(path).Where(file =>
+		{
+			// 过滤系统文件。
+			if (file == "Thumbs.db")
+			{
+				return false;
+			}
+			return true;
+		}).ToArray();
 		if (compress)
 		{
-			long fileSize = 0;
-			foreach (var file in files)
+			var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".7z");
+			if (await CompressImages(path, files, sevenZPath))
 			{
-				fileSize += new FileInfo(file).Length;
-			}
-			List<Func<TaskContext, Task>> tasks;
-			if (fileSize > CompressThreshold)
-			{
-				tasks = await GetCompressTasksAsync(path, null, new CompressConfig()
-				{
-					// 尺寸要超出 20% 才触发压缩。
-					Oversize = 0.2,
-				});
-			}
-			else
-			{
-				tasks = [];
-			}
-			if (tasks.Count > 0)
-			{
-				// 将图片备份为 7z。
-				var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".7z");
 				generatedFiles.Add(sevenZPath);
-				SevenZConfig config = new()
-				{
-					FileName = sevenZPath,
-					WorkingDirectory = Path.GetDirectoryName(path)!,
-					Files = files,
-				};
-				await AnsiConsole.Status().StartAsync($"备份原图 ...", ctx => Compress(config, (progress) =>
-				{
-					ctx.Status($"备份原图 {progress}");
-				}));
-				await RunTaskAsync("压缩图片", tasks);
 				// 压缩完重新提取文件。
 				files = Directory.GetFiles(path);
 			}
@@ -306,48 +291,54 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 					return 1;
 				}
 			});
+			// 检查章节标题
+			string[] chapters = DetectComicChapters(files);
 			bool hasCover = false;
-			foreach (var file in files)
+			for (int i = 0; i < files.Length; i++)
 			{
-				string chapterId = Path.GetFileNameWithoutExtension(file);
-				string? chapterTitle;
-				bool isCover = IsCoverFile(file);
-				// 使用空格分割 id 和 title。
-				int idx = chapterId.IndexOf(' ');
-				if (idx > 0)
+				var file = files[i];
+				string pageId = Path.GetFileNameWithoutExtension(file);
+				string title = pageId;
+				string? navTitle = pageId;
+				var chapter = chapters[i];
+				// 导航标题不需要包含章节部分。
+				if (!string.IsNullOrEmpty(chapter))
 				{
-					// 总是保留 title 中的序号。
-					chapterTitle = chapterId;
-					chapterId = chapterId[0..idx];
+					navTitle = navTitle[(chapter.Length + 1)..];
+				}
+				bool isCover = IsCoverFile(file);
+				// 使用空格分割 id 和 title，要求 id 只包含索引。
+				// 避免误识别 xxx 01.jpg, xxx 02.jpg 等格式
+				int idx = navTitle.IndexOf(' ');
+				if (idx > 0 && IndexRegex.Match(navTitle[0..idx]).Success)
+				{
+					// pageId 中不需要包含额外的 title 部分。
+					pageId = pageId[..(pageId.Length - navTitle.Length + idx)];
 				}
 				else if (isCover)
 				{
 					// 不重复设置封面的标题。
 					if (hasCover)
 					{
-						chapterTitle = null;
+						navTitle = null;
 					}
 					else
 					{
-						chapterTitle = "封面";
+						navTitle = "封面";
 					}
-				}
-				else
-				{
-					chapterTitle = chapterId;
 				}
 				Document doc = new();
 				Paragraph paragraph = new();
 				doc.Children.Add(paragraph);
-				Link img = new(true, file, chapterTitle);
-				img.Attributes.Add("id", chapterId);
+				Link img = new(true, file, pageId);
+				img.Attributes.Add("id", pageId);
 				if (isCover && !hasCover)
 				{
 					// 只使用首个封面。
 					img.Attributes.Add("cover", "");
 				}
 				paragraph.Children.Add(img);
-				exporter.AddPage(chapterId, chapterTitle, doc);
+				exporter.AddPage(pageId, title, navTitle, doc, string.IsNullOrEmpty(chapter) ? null : new string[] { chapter });
 				if (isCover)
 				{
 					hasCover = true;
@@ -365,6 +356,106 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			});
 			AnsiConsole.MarkupLine($"已添加 [green]{id}[/]");
 		}
+	}
+
+	/// <summary>
+	/// 压缩图片。
+	/// </summary>
+	private static async Task<bool> CompressImages(string path, string[] files, string targetPath)
+	{
+		long fileSize = 0;
+		foreach (var file in files)
+		{
+			fileSize += new FileInfo(file).Length;
+		}
+		List<Func<TaskContext, Task>> tasks;
+		if (fileSize > CompressThreshold)
+		{
+			tasks = await GetCompressTasksAsync(path, null, new CompressConfig()
+			{
+				// 尺寸要超出 20% 才触发压缩。
+				Oversize = 0.2,
+			});
+		}
+		else
+		{
+			tasks = [];
+		}
+		if (tasks.Count > 0)
+		{
+			// 将图片备份为 7z。
+			SevenZConfig config = new()
+			{
+				FileName = targetPath,
+				WorkingDirectory = Path.GetDirectoryName(path)!,
+				Files = files,
+			};
+			await AnsiConsole.Status().StartAsync($"备份原图 ...", ctx => Compress(config, (progress) =>
+			{
+				ctx.Status($"备份原图 {progress}");
+			}));
+			await RunTaskAsync("压缩图片", tasks);
+			return true;
+		}
+		return false;
+	}
+
+	/// <summary>
+	/// 检测漫画的章节。
+	/// </summary>
+	private static string[] DetectComicChapters(string[] files)
+	{
+		string[] names = files.Select(path => Path.GetFileNameWithoutExtension(path)!).ToArray();
+		string[] chapters = new string[files.Length];
+		// 要求章节至少包含 4 个页面。
+		int len = names.Length - 4;
+		for (int i = 0; i < len; i++)
+		{
+			string name = names[i];
+			int idx = name.IndexOf(' ');
+			while (idx > 0)
+			{
+				// 候选包含空格。
+				string candidate = name[0..(idx + 1)];
+				bool isPrefix = true;
+				for (int j = 1; j < 4; j++)
+				{
+					if (!names[i + j].StartsWith(candidate))
+					{
+						isPrefix = false;
+						break;
+					}
+				}
+				if (isPrefix)
+				{
+					// 是前缀，检查后续页面。
+					string prefix = candidate[..^1];
+					for (int j = i; j < names.Length; j++)
+					{
+						if (names[j].StartsWith(candidate))
+						{
+							if (string.IsNullOrEmpty(chapters[j]))
+							{
+								chapters[j] = prefix;
+							}
+							else
+							{
+								chapters[j] += " " + prefix;
+							}
+							names[j] = names[j][candidate.Length..];
+						}
+					}
+					name = names[i];
+					idx = name.IndexOf(' ');
+				}
+				else
+				{
+					// 不是前缀，返回。
+					break;
+				}
+			}
+		}
+		return chapters;
 	}
 
 	/// <summary>

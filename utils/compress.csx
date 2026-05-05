@@ -220,11 +220,13 @@ private class CompressContext
 		{
 			if (ImageExt.Contains(ext))
 			{
+				// 总是需要压缩 png 和 bmp。
+				bool forceCompress = ext == ".png" || ext == ".bmp";
 				// 检查图片是否超出大小限制
 				var info = new MagickImageInfo(file);
 				int width = (int)info.Width;
 				int height = (int)info.Height;
-				if (imageSize.NeedCompress(ref width, ref height, oversize))
+				if (imageSize.NeedCompress(ref width, ref height, oversize, forceCompress))
 				{
 					return CompressImageAsync(file, desc, width, height);
 				}

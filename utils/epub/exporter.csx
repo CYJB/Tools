@@ -125,7 +125,7 @@ public class EPubExporter : IEPubExporter
 	/// <summary>
 	/// 添加指定的页面。
 	/// </summary>
-	public void AddPage(string id, string? title, Document document)
+	public void AddPage(string id, string title, string? navTitle, Document document, string[]? chapter = null)
 	{
 		// 需要先渲染再写入。
 		renderer.Render(document, title);
@@ -136,7 +136,7 @@ public class EPubExporter : IEPubExporter
 			using XmlWriter writer = XmlWriter.Create(stream, xmlWriterSettings);
 			renderer.WriteTo(writer);
 		}
-		AddPageMeta(pageId, pagePath, title);
+		AddPageMeta(pageId, pagePath, navTitle, chapter);
 	}
 
 	// /// <summary>
@@ -173,12 +173,13 @@ public class EPubExporter : IEPubExporter
 	/// <param name="id">页面的 id。</param>
 	/// <param name="pageName">页面的名称。</param>
 	/// <param name="title">页面的标题。</param>
-	private void AddPageMeta(string id, string pageName, string? title = null)
+	/// <param name="chapter">页面的章节。</param>
+	private void AddPageMeta(string id, string pageName, string? title = null, string[]? chapter = null)
 	{
 		metadata.AddManifest(id, pageName, "application/xhtml+xml", true);
 		if (title != null)
 		{
-			navigation.AddNav(pageName, title);
+			navigation.AddNav(pageName, title, chapter);
 		}
 	}
 

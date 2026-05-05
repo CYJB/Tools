@@ -24,4 +24,4 @@ static async Task<FileBlock[]> GetFileBlocks(string filePath, int blockSize)
 /// <summary>
 /// 文件的分片。
 /// </summary>
-record class FileBlock(int Offset, int Size, string MD5) { }
+record class FileBlock(long Offset, long Size, string MD5) { }

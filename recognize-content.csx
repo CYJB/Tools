@@ -43,9 +43,9 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 		public string? ExtraPrompt { get; init; }
 	}
 
-	private static ConfigHolder<Config> configHolder = new();
-	private static Regex PageIdBeforeTitleRegex = new(@"^(\d+)\s+(.*)$");
-	private static Regex PageIdAfterTitleRegex = new(@"^(.*)\s+(\d+)$");
+	private static readonly ConfigHolder<Config> configHolder = new();
+	private static readonly Regex PageIdBeforeTitleRegex = new(@"^(\d+)(?:\s+|[^\d])(.*)$");
+	private static readonly Regex PageIdAfterTitleRegex = new(@"^(.*)(?:\s+|[^\d])(\d+)$");
 
 	/// <summary>
 	/// 执行命令。
@@ -61,10 +61,15 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 		StringBuilder result = new();
 		await AnsiConsole.Status().StartAsync($"分析目录...", async ctx =>
 		{
-			var prompt = "识别图中的目录，返回每个条目的标题和相关页码" + extraPrompt;
-			await foreach (var token in chat.SendAsync(prompt, null, [imageBase64], format, cancellationToken))
+			var prompt = "识别图中的目录，返回每个条目的标题和相关页码，忽略无法与页面关联的标题。" + extraPrompt;
+			var imagesAsBase64 = new string[] { imageBase64 };
+			// 最多重试两次。
+			for (int i = 0; result.Length == 0 && i < 2; i++)
 			{
-				result.Append(token);
+				await foreach (var token in chat.SendAsync(prompt, null, imagesAsBase64, format, cancellationToken))
+				{
+					result.Append(token);
+				}
 			}
 		});
 		var items = JsonSerializer.Deserialize<Result[]>(result.ToString())!;
@@ -74,7 +79,10 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 			return 0;
 		}
 		// 识别部分失败模式。
-		DetectFailure(items);
+		if (!DetectFailure1(items))
+		{
+			DetectFailure2(items);
+		}
 		var fileNameLen = Path.GetFileNameWithoutExtension(path).Length;
 		var ext = Path.GetExtension(path);
 		var dir = Path.GetDirectoryName(path);
@@ -93,19 +101,25 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 			originName += ext;
 			if (File.Exists(Path.Join(dir, originName)))
 			{
-				Console.WriteLine("{0} → {1}", originName, targetName);
 				renameItems.Add(new RenamePair(originName, targetName));
 			}
 			else
 			{
-				AnsiConsole.MarkupLine("[red]未找到文件 {0}[/]", targetName);
+				AnsiConsole.MarkupLine("[red]未找到文件 {0}[/]", targetName.EscapeMarkup());
 			}
 		}
 		if (renameItems.Count > 0 && AnsiConsole.Confirm("是否重命名文件？"))
 		{
 			foreach (var item in renameItems)
 			{
-				File.Move(Path.Join(dir, item.OriginName), Path.Join(dir, item.TargetName));
+				try
+				{
+					File.Move(Path.Join(dir, item.OriginName), Path.Join(dir, item.TargetName));
+				}
+				catch (Exception e)
+				{
+					AnsiConsole.MarkupLine("[red]文件重命名失败: {0}[/]", e);
+				}
 			}
 			Console.WriteLine("重命名完毕！");
 		}
@@ -137,21 +151,17 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 	}
 
 	/// <summary>
-	/// 识别一种常见的失败模式：PageId 是从 0 或 1 开始的顺序编号，此时页码很可能在 Title 里。
+	/// 识别一种常见的失败模式 1：PageId 是顺序编号，此时页码很可能在 Title 里。
 	/// </summary>
-	private static void DetectFailure(Result[] items)
+	private static bool DetectFailure1(Result[] items)
 	{
 		var len = items.Length;
 		int start = items[0].PageId;
-		if (start != 0 && start != 1)
-		{
-			return;
-		}
 		for (int i = 1; i < len; i++)
 		{
 			if (items[i].PageId != start + i)
 			{
-				return;
+				return false;
 			}
 		}
 		// 尝试从 Title 中识别页码，优先识别 Title 前的页码。
@@ -160,13 +170,7 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 		bool success = true;
 		for (int i = 0; i < len; i++)
 		{
-			var match = PageIdBeforeTitleRegex.Match(items[i].Title);
-			if (match.Success)
-			{
-				newPageId[i] = int.Parse(match.Groups[1].ValueSpan);
-				newTitle[i] = match.Groups[2].Value;
-			}
-			else
+			if (!TryMatchStartPageId(items[i].Title, out newPageId[i], out newTitle[i]))
 			{
 				success = false;
 				break;
@@ -178,13 +182,7 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 			success = true;
 			for (int i = 0; i < len; i++)
 			{
-				var match = PageIdAfterTitleRegex.Match(items[i].Title);
-				if (match.Success)
-				{
-					newTitle[i] = match.Groups[1].Value;
-					newPageId[i] = int.Parse(match.Groups[2].ValueSpan);
-				}
-				else
+				if (!TryMatchEndPageId(items[i].Title, out newPageId[i], out newTitle[i]))
 				{
 					success = false;
 					break;
@@ -199,6 +197,93 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 				items[i].Title = newTitle[i];
 			}
 		}
+		return success;
+	}
+
+	/// <summary>
+	/// 识别一种常见的失败模式 2：PageId 在 Title 的开头或末尾。
+	/// </summary>
+	private static bool DetectFailure2(Result[] items)
+	{
+		var len = items.Length;
+		bool isStart = true, isEnd = true;
+		for (int i = 0; i < len; i++)
+		{
+			var item = items[i];
+			if (isStart && (!TryMatchStartPageId(item.Title, out int pageId, out _) || pageId != item.PageId))
+			{
+				isStart = false;
+				if (!isEnd)
+				{
+					return false;
+				}
+			}
+			if (isEnd && (!TryMatchEndPageId(item.Title, out pageId, out _) || pageId != item.PageId))
+			{
+				isEnd = false;
+				if (!isStart)
+				{
+					return false;
+				}
+			}
+		}
+		if (isStart)
+		{
+			for (int i = 0; i < len; i++)
+			{
+				var item = items[i];
+				if (TryMatchStartPageId(item.Title, out _, out string title))
+				{
+					item.Title = title;
+				}
+			}
+		}
+		if (isEnd)
+		{
+			for (int i = 0; i < len; i++)
+			{
+				var item = items[i];
+				if (TryMatchEndPageId(item.Title, out _, out string title))
+				{
+					item.Title = title;
+				}
+			}
+		}
+		return true;
+	}
+
+	/// <summary>
+	/// 尝试匹配起始位置的页码。
+	/// </summary>
+	private static bool TryMatchStartPageId(string title, out int pageId, out string newTitle)
+	{
+		var match = PageIdBeforeTitleRegex.Match(title);
+		if (match.Success)
+		{
+			pageId = int.Parse(match.Groups[1].ValueSpan);
+			newTitle = match.Groups[2].Value;
+			return true;
+		}
+		pageId = 0;
+		newTitle = string.Empty;
+		return false;
+	}
+
+	/// <summary>
+	/// 尝试匹配结束位置的页码。
+	/// </summary>
+	private static bool TryMatchEndPageId(string title, out int pageId, out string newTitle)
+	{
+		var match = PageIdAfterTitleRegex.Match(title);
+		if (match.Success)
+		{
+			pageId = int.Parse(match.Groups[2].ValueSpan);
+			newTitle = match.Groups[1].Value;
+			return true;
+		}
+		pageId = 0;
+		newTitle = string.Empty;
+		return false;
 	}
 
 	/// <summary>

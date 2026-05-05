@@ -21,6 +21,14 @@ class EPubNavigation
 	/// 导航的索引。
 	/// </summary>
 	private int navIndex = 1;
+	/// <summary>
+	/// 当前章节标题。
+	/// </summary>
+	private readonly List<string> currentChapter = new();
+	/// <summary>
+	/// 当前章节的导航 XML 节点。
+	/// </summary>
+	private List<XmlElement> currentChapterNode = new();
 
 	public EPubNavigation(string uuid, string title, string author)
 	{
@@ -73,9 +81,38 @@ class EPubNavigation
 	/// <summary>
 	/// 添加新的导航。
 	/// </summary>
-	public void AddNav(string pageName, string title)
+	public void AddNav(string pageName, string title, string[]? chapter = null)
 	{
-		navMapNode.AppendChild(CreateNavPoint(pageName, title));
+		XmlElement navNode = navMapNode;
+		if (chapter == null || chapter.Length == 0)
+		{
+			currentChapter.Clear();
+			currentChapterNode.Clear();
+		}
+		else
+		{
+			for (int i = 0; i < chapter.Length; i++)
+			{
+				var chapterTitle = chapter[i];
+				if (currentChapter.Count > i && currentChapter[i] == chapterTitle)
+				{
+					// 标题匹配，使用现有导航项。
+					navNode = currentChapterNode[i];
+				}
+				else
+				{
+					// 标题不匹配，创建新的导航项。
+					XmlElement newNavNode = CreateNavPoint(pageName, chapterTitle);
+					navNode.AppendChild(newNavNode);
+					navNode = newNavNode;
+					currentChapter.RemoveRange(i, currentChapter.Count - i);
+					currentChapter.Add(chapterTitle);
+					currentChapterNode.RemoveRange(i, currentChapterNode.Count - i);
+					currentChapterNode.Add(navNode);
+				}
+			}
+		}
+		navNode.AppendChild(CreateNavPoint(pageName, title));
 	}
 
 	/// <summary>
