@@ -20,6 +20,7 @@
 	<Compile Include="../utils/compress.csx" />
 	<Compile Include="../utils/config-holder.csx" />
 	<Compile Include="../utils/epub/exporter.csx" />
+	<Compile Include="../utils/epub/navigation.csx" />
 	<Compile Include="../utils/file.csx" />
 	<Compile Include="../utils/task.csx" />
   </ItemGroup>

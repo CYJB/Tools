@@ -31,5 +31,6 @@
 
 - `-l, --list`：列出备份文件信息，会将备份路径、密码、尺寸等输出到书库根目录的 `.backup-data.csv`。
 - `-d, --dir`：网盘的备份目标路径。会保存到配置中，只指定一次即可。
+- `-h|--history`：保留的备份历史个数，默认为 3。
 
 [calibre]: https://calibre-ebook.com/zh_CN

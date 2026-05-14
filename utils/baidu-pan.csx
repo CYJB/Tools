@@ -8,8 +8,10 @@
 #nullable enable
 
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Spectre.Console;
@@ -82,6 +84,34 @@ public class BaiduPan
 	}
 
 	/// <summary>
+	/// 重命名指定文件。
+	/// </summary>
+	public async Task Rename(string oldPath, string newName)
+	{
+		if (string.IsNullOrEmpty(oldPath) || string.IsNullOrEmpty(newName))
+		{
+			return;
+		}
+		string accessToken = await GetAccessTokenAsync();
+		var url = FileAPI + BuildUriQuery(new() {
+			{ "method", "filemanager" },
+			{ "access_token", accessToken },
+			{ "opera", "rename" },
+		});
+		RenameParams[] fileList = [new RenameParams(oldPath, newName)];
+		var requestBody = new FormUrlEncodedContent([
+			new("async", "0"),
+			new("filelist", JsonSerializer.Serialize(fileList)),
+			new("ondup", "overwrite"),
+		]);
+		FileManagerResult result = await PostJsonAsync<FileManagerResult>(httpClient, url, requestBody);
+		if (result.Errno != 0)
+		{
+			throw GetErrnoException(result.Errno, oldPath);
+		}
+	}
+
+	/// <summary>
 	/// 删除指定文件。
 	/// </summary>
 	public async Task Delete(params string[] path)
@@ -97,7 +127,7 @@ public class BaiduPan
 			{ "opera", "delete" },
 		});
 		var requestBody = new FormUrlEncodedContent([
-			new("async", "2"),
+			new("async", "0"),
 			new("filelist", JsonSerializer.Serialize(path)),
 		]);
 		FileManagerResult result = await PostJsonAsync<FileManagerResult>(httpClient, url, requestBody);
@@ -306,6 +336,23 @@ private class UploadResult
 	/// </summary>
 	[JsonPropertyName("md5")]
 	public required string MD5 { get; set; }
+}
+
+/// <summary>
+/// 文件重命名参数。
+/// </summary>
+private class RenameParams(string path, string newName)
+{
+	/// <summary>
+	/// 文件路径。
+	/// </summary>
+	[JsonPropertyName("path")]
+	public string Path { get; init; } = path;
+	/// <summary>
+	/// 重命名后的新路径。
+	/// </summary>
+	[JsonPropertyName("newname")]
+	public string NewName { get; init; } = newName;
 }
 
 /// <summary>

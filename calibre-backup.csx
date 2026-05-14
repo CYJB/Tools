@@ -12,10 +12,12 @@
 
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Spectre.Console;
@@ -47,6 +49,11 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		[CommandOption("-d|--dir")]
 		[DefaultValue("")]
 		public string? Dir { get; init; }
+
+		[Description("保留的备份历史个数，默认为 3。")]
+		[CommandOption("-h|--history")]
+		[DefaultValue("")]
+		public int? History { get; init; }
 	}
 
 	/// <summary>
@@ -75,15 +82,25 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 		ConfigHolder<BackupConfig> configHolder = new(Path.Combine(currentDir, BackupConfigFile));
 		BackupConfig config = configHolder.Config;
+		bool needSave = false;
+		if (settings.History.HasValue)
+		{
+			config.History = settings.History.Value;
+			needSave = true;
+		}
 		if (!string.IsNullOrEmpty(settings.Dir))
 		{
 			config.Dir = NormalizeDir(settings.Dir);
-			configHolder.Save();
+			needSave = true;
 		}
 		if (string.IsNullOrEmpty(config.Dir))
 		{
 			// 不指定备份目录容易误覆盖，这里总是询问。
 			config.Dir = NormalizeDir(AnsiConsole.Ask<string>("请输入网盘的备份目录:"));
+			needSave = true;
+		}
+		if (needSave)
+		{
 			configHolder.Save();
 		}
 		// 列出备份文件信息。
@@ -147,6 +164,10 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// 备份路径。
 		/// </summary>
 		public string? Dir { get; set; } = null;
+		/// <summary>
+		/// 备份历史记录个数。
+		/// </summary>
+		public int? History { get; set; } = null;
 		/// <summary>
 		/// 文件列表。
 		/// </summary>
@@ -319,7 +340,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					group.Files.Add(Path.Combine(dir, BackupConfigFile));
 					group.Files.Add(metaBackupPath);
 					group.Files.Add(Path.Combine(dir, MetadataDBPrefsBackup));
-					await task.Backup(this, group, (type, progress) =>
+					await task.Backup(this, group, 0, (type, progress) =>
 					{
 						string message = $"    {type} config";
 						if (progress.Length > 0)
@@ -343,14 +364,34 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 
 		/// <summary>
+		/// 返回指定名称的云盘历史文件。
+		/// </summary>
+		public BaiduPanFileInfo[] GetCloudFileHistory(string name)
+		{
+			string prefix = name + " ";
+			return cloudFiles.Where(file => file.Name.StartsWith(prefix)).ToArray();
+		}
+
+		/// <summary>
 		/// 上传临时文件。
 		/// </summary>
-		public async Task Upload(string name, Action<float>? progressCallback = null)
+		public async Task Upload(string name, bool history, Action<float>? progressCallback = null)
 		{
-			if (cloudFiles.Find((file) => file.Name == name) != null)
+			var oldFile = cloudFiles.Find((file) => file.Name == name);
+			if (oldFile != null)
 			{
-				// 先删除同名文件。
-				await cloud.Delete(cloudDir + name);
+				if (history)
+				{
+					// 将同名文件改名为历史备份。
+					DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(oldFile.ServerCreatetime);
+					string suffix = dateTimeOffset.ToString(" yyyy-MM-dd");
+					await cloud.Rename(cloudDir + name, name + suffix);
+				}
+				else
+				{
+					// 删除同名文件。
+					await cloud.Delete(cloudDir + name);
+				}
 			}
 			// 再上传。
 			await cloud.Upload(cloudDir + name, backupTempPath, progressCallback);
@@ -397,6 +438,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		private async Task<bool> BackupBook(string id, string author, string name, string dir)
 		{
 			string escapedName = Markup.Escape($"[{id}] {name}");
+			var history = configHolder.Config.History.GetValueOrDefault(3);
 			try
 			{
 				var isBackup = await AnsiConsole.Status().StartAsync($"    扫描 {escapedName}", async ctx =>
@@ -429,7 +471,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					bool isBackup = false;
 					foreach (var group in groups)
 					{
-						isBackup |= await task.Backup(this, group, (type, progress) =>
+						isBackup |= await task.Backup(this, group, history, (type, progress) =>
 						{
 							string message = $"    {type} {escapedName}";
 							if (progress.Length > 0)
@@ -605,7 +647,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// <summary>
 		/// 备份指定的分组。
 		/// </summary>
-		public async Task<bool> Backup(BackupContext context, BackupFileGroup group, Action<string, string>? progressCallback = null)
+		public async Task<bool> Backup(BackupContext context, BackupFileGroup group, int history, Action<string, string>? progressCallback = null)
 		{
 			string cloudFileName = group.Name == null ? id : $"{id}_{group.Name}";
 			// 要先检查 group 中文件是否发生改变，确保能够保存新的文件列表。
@@ -637,10 +679,23 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				progressCallback?.Invoke($"压缩 {groupName}", progress);
 			});
 			size += new FileInfo(backupTempPath).Length;
-			// 检查云盘是否具有同名文件。
 			progressCallback?.Invoke($"上传 {groupName}", "");
+			// 检查备份历史。
+			if (history > 0)
+			{
+				var historyFiles = context.GetCloudFileHistory(cloudFileName);
+				int deleteCount = historyFiles.Length - history + 1;
+				if (deleteCount > 0)
+				{
+					// 移除最早的历史记录。
+					for (int i = 0; i < deleteCount; i++)
+					{
+						await context.Delete(historyFiles[i].Name);
+					}
+				}
+			}
 			// 再上传。
-			await context.Upload(cloudFileName, (progress) =>
+			await context.Upload(cloudFileName, history > 0, (progress) =>
 			{
 				progressCallback?.Invoke($"上传 {groupName}", progress.ToString("0.##") + "%");
 			});

@@ -8,6 +8,7 @@
 #load "utils/epub/exporter.csx"
 #load "utils/file.csx"
 #load "utils/task.csx"
+#r "nuget: Cyjb, 1.0.25"
 #r "nuget: Spectre.Console, 0.54.0"
 #r "nuget: Spectre.Console.Cli, 0.53.1"
 
@@ -19,6 +20,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Cyjb;
 using Cyjb.Markdown;
 using Cyjb.Markdown.Syntax;
 using Paragraph = Cyjb.Markdown.Syntax.Paragraph;
@@ -159,6 +161,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		{
 			// 是目录，检查内容
 			var entries = Directory.GetFileSystemEntries(path);
+			Array.Sort(entries);
 			List<string> dirs = [];
 			List<string> novels = [];
 			int imageCount = 0;
@@ -252,23 +255,15 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	private async Task PackComic(string path, EPubExporter exporter, bool compress, Calibre? calibre)
 	{
 		List<string> generatedFiles = new() { exporter.FilePath };
-		string[] files = Directory.GetFiles(path).Where(file =>
-		{
-			// 过滤系统文件。
-			if (file == "Thumbs.db")
-			{
-				return false;
-			}
-			return true;
-		}).ToArray();
+		string[] files = GetFiles(path);
 		if (compress)
 		{
-			var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".7z");
+			var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".cb7");
 			if (await CompressImages(path, files, sevenZPath))
 			{
 				generatedFiles.Add(sevenZPath);
 				// 压缩完重新提取文件。
-				files = Directory.GetFiles(path);
+				files = GetFiles(path);
 			}
 		}
 		await AnsiConsole.Status().StartAsync($"生成 epub...", async ctx =>
@@ -456,6 +451,23 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			}
 		}
 		return chapters;
+	}
+
+	/// <summary>
+	/// 返回指定目录下的文件列表。
+	/// </summary>
+	private static string[] GetFiles(string path)
+	{
+		return Directory.GetFiles(path).Where(file =>
+		{
+			// 过滤系统文件。
+			var fileName = Path.GetFileName(file);
+			if (fileName == "Thumbs.db")
+			{
+				return false;
+			}
+			return true;
+		}).OrderBy(file => file, StringNaturalComparer.Default).ToArray();
 	}
 
 	/// <summary>

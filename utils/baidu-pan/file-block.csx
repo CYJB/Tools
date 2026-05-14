@@ -1,5 +1,7 @@
 #load "../md5.csx"
 
+using System.IO;
+
 /// <summary>
 /// 返回文件的分片。
 /// </summary>
@@ -11,7 +13,7 @@ static async Task<FileBlock[]> GetFileBlocks(string filePath, int blockSize)
 	// 计算文件分片。
 	using FileStream fs = new(filePath, FileMode.Open, FileAccess.Read);
 	byte[] buffer = new byte[blockSize];
-	int offset = 0;
+	long offset = 0;
 	for (int i = 0; i < blockCount; i++, offset += blockSize)
 	{
 		int size = await fs.ReadAsync(buffer);
