@@ -485,13 +485,17 @@ class Calibre
 	/// <summary>
 	/// 为指定书籍添加格式（文件）。
 	/// </summary>
-	public async Task AddFormat(string id, string file)
+	public async Task AddFormat(string id, string file, bool isExtraData = false)
 	{
 		using var process = new Process();
 		List<string> args = new() { "add_format" };
 		args.AddRange(libraryArgs);
 		args.Add(id);
 		args.Add(file);
+		if (isExtraData)
+		{
+			args.Add("--as-extra-data-file");
+		}
 		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
 		{
 			WorkingDirectory = binDir,
