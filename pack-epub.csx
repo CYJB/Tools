@@ -362,7 +362,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 				AnsiConsole.MarkupLine($"已添加 [green]{id}[/]");
 				foreach (var video in videoFiles)
 				{
-					await calibre.AddFormat(id, video);
+					await calibre.AddFormat(id, Path.GetFullPath(video), true);
 					AnsiConsole.MarkupLine($"已添加视频 [green]{Path.GetFileName(video)}[/]");
 				}
 			}
@@ -396,11 +396,16 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		if (tasks.Count > 0)
 		{
 			// 将图片备份为 7z。
+			int prefixLen = path.Length;
+			if (!Path.EndsInDirectorySeparator(path))
+			{
+				prefixLen++;
+			}
 			SevenZConfig config = new()
 			{
 				FileName = targetPath,
-				WorkingDirectory = Path.GetDirectoryName(path)!,
-				Files = files,
+				WorkingDirectory = path,
+				Files = files.Select(filePath => filePath[prefixLen..]).ToArray(),
 			};
 			await AnsiConsole.Status().StartAsync($"备份原图 ...", ctx => Compress(config, (progress) =>
 			{

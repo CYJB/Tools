@@ -106,26 +106,18 @@ private class CompressContext
 		{
 			if (config.ImageSize != null)
 			{
-				var size = Size.Parse(config.ImageSize);
-				if (size.IsValid)
+				imageSize = Size.Parse(config.ImageSize);
+				if (save)
 				{
-					imageSize = size;
-					if (save)
-					{
-						defaultConfig.ImageSize = config.ImageSize;
-					}
+					defaultConfig.ImageSize = config.ImageSize;
 				}
 			}
 			if (config.VideoSize != null)
 			{
-				var size = Size.Parse(config.VideoSize);
-				if (size.IsValid)
+				videoSize = Size.Parse(config.VideoSize);
+				if (save)
 				{
-					videoSize = size;
-					if (save)
-					{
-						defaultConfig.VideoSize = config.VideoSize;
-					}
+					defaultConfig.VideoSize = config.VideoSize;
 				}
 			}
 			if (config.VideoBitRate != null && config.VideoBitRate.Value > 0)
@@ -218,7 +210,7 @@ private class CompressContext
 		var ext = Path.GetExtension(file).ToLower();
 		try
 		{
-			if (ImageExt.Contains(ext))
+			if (ImageExt.Contains(ext) && imageSize.IsValid)
 			{
 				// 总是需要压缩 png 和 bmp。
 				bool forceCompress = ext == ".png" || ext == ".bmp";
