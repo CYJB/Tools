@@ -1,5 +1,6 @@
 obj
 *.config.json
+*.lscache
 .vs
 *.exe
 !utils/**/*.exe

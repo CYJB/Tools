@@ -231,7 +231,7 @@ private class CompressContext
 					return CompressImageAsync(file, desc, width, height);
 				}
 			}
-			else if (VideoExt.Contains(ext))
+			else if (VideoExt.Contains(ext) && videoSize.IsValid)
 			{
 				// 检查视频是否超出大小限制。
 				var mediaInfo = await FFmpeg.GetMediaInfo(file);
@@ -372,6 +372,7 @@ readonly struct Size
 	{
 		return option switch
 		{
+			"ignore" => new Size(0, 0, false),
 			"720" => new Size(1280, 720, false),
 			"720r" => new Size(1280, 720, true),
 			"1080" => new Size(1920, 1080, false),

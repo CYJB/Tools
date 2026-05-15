@@ -6,6 +6,7 @@
 #load "utils/compress.csx"
 #load "utils/config-holder.csx"
 #load "utils/epub/exporter.csx"
+#load "utils/ffmpeg.csx"
 #load "utils/file.csx"
 #load "utils/task.csx"
 #r "nuget: Cyjb, 1.0.25"
@@ -255,15 +256,18 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	private async Task PackComic(string path, EPubExporter exporter, bool compress, Calibre? calibre)
 	{
 		List<string> generatedFiles = new() { exporter.FilePath };
-		string[] files = GetFiles(path);
+		string[] allFiles = GetFiles(path);
+		// 分离视频文件，视频不添加到 epub 或 cb7 中。
+		string[] files = allFiles.Where(f => !VideoExt.Contains(Path.GetExtension(f).ToLower())).ToArray();
+		string[] videoFiles = allFiles.Where(f => VideoExt.Contains(Path.GetExtension(f).ToLower())).ToArray();
 		if (compress)
 		{
 			var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".cb7");
 			if (await CompressImages(path, files, sevenZPath))
 			{
 				generatedFiles.Add(sevenZPath);
-				// 压缩完重新提取文件。
-				files = GetFiles(path);
+				// 压缩完重新提取文件（仍排除视频）。
+				files = GetFiles(path).Where(f => !VideoExt.Contains(Path.GetExtension(f).ToLower())).ToArray();
 			}
 		}
 		await AnsiConsole.Status().StartAsync($"生成 epub...", async ctx =>
@@ -349,7 +353,19 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 				Authors = exporter.Author,
 				Automerge = "new_record",
 			});
-			AnsiConsole.MarkupLine($"已添加 [green]{id}[/]");
+			if (string.IsNullOrEmpty(id))
+			{
+				AnsiConsole.MarkupLine($"[yellow]未能获取书籍 ID[/]");
+			}
+			else
+			{
+				AnsiConsole.MarkupLine($"已添加 [green]{id}[/]");
+				foreach (var video in videoFiles)
+				{
+					await calibre.AddFormat(id, video);
+					AnsiConsole.MarkupLine($"已添加视频 [green]{Path.GetFileName(video)}[/]");
+				}
+			}
 		}
 	}
 
@@ -370,6 +386,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			{
 				// 尺寸要超出 20% 才触发压缩。
 				Oversize = 0.2,
+				VideoSize = "ignore",
 			});
 		}
 		else
@@ -462,7 +479,11 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		{
 			// 过滤系统文件。
 			var fileName = Path.GetFileName(file);
-			if (fileName == "Thumbs.db")
+			if (fileName is "Thumbs.db" or ".DS_Store" or "desktop.ini")
+			{
+				return false;
+			}
+			if ((File.GetAttributes(file) & FileAttributes.Hidden) != 0)
 			{
 				return false;
 			}
