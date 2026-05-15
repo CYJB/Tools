@@ -2,6 +2,8 @@
 
 支持将漫画打包为 epub，并支持将过大的图片压缩到合适大小（原图会备份为 .7z 文件），压缩时使用[压缩图片和视频](./compress-media.md)时的默认配置。
 
+打包漫画时，目录中的视频文件会保持原样，不会被压缩或添加到 epub 中。如果设置自动添加到 Calibre，视频添加到相应书籍的数据目录内。
+
 ## 用法
 
 `dotnet script pack-epub.csx -- [path] [OPTIONS]`

@@ -454,7 +454,7 @@ class Calibre
 				var match = CalibreAddResultRegex.Match(e.Data.Trim());
 				if (match.Success)
 				{
-					id = match.Value;
+					id = match.Groups[1].Value;
 				}
 			}
 		};
@@ -480,6 +480,47 @@ class Calibre
 			throw new Exception($"添加失败: {errorBuilder}");
 		}
 		return id ?? "";
+	}
+
+	/// <summary>
+	/// 为指定书籍添加格式（文件）。
+	/// </summary>
+	public async Task AddFormat(string id, string file)
+	{
+		using var process = new Process();
+		List<string> args = new() { "add_format" };
+		args.AddRange(libraryArgs);
+		args.Add(id);
+		args.Add(file);
+		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
+		{
+			WorkingDirectory = binDir,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+		};
+
+		var errorBuilder = new StringBuilder();
+		process.ErrorDataReceived += (sender, e) =>
+		{
+			if (!string.IsNullOrEmpty(e.Data))
+			{
+				errorBuilder.Append(e.Data);
+			}
+		};
+		process.Start();
+
+		process.BeginOutputReadLine();
+		process.BeginErrorReadLine();
+		await process.WaitForExitAsync();
+		if (process.ExitCode != 0)
+		{
+			throw new Exception($"添加格式失败: {process.ExitCode}, {errorBuilder}");
+		}
+		else if (errorBuilder.Length > 0)
+		{
+			throw new Exception($"添加格式失败: {errorBuilder}");
+		}
 	}
 
 	/// <summary>
