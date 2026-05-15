@@ -6,3 +6,6 @@
 - [压缩图片和视频](./compress-media.md)
 - [打包 epub](./pack-epub.md)
 - [从图片识别书籍目录](./recognize-content.md)
+- [Web 工具](https://cyjb.github.io/Tools/)
+  - LRC 歌词合并
+  - 日文输入
