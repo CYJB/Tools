@@ -4,3 +4,7 @@ obj
 .vs
 *.exe
 !utils/**/*.exe
+
+# Claude Code
+.claude/
+!.claude/*.md

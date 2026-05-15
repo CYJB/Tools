@@ -16,7 +16,7 @@ const JIS_MAP: Record<string, [string, string, string, string]> = {
   Digit8:       ['ゆ','ユ','ゅ','ュ'],
   Digit9:       ['よ','ヨ','ょ','ョ'],
   Digit0:       ['わ','ワ','を','ヲ'],
-  Minus:        ['ほ','ホ','ほ','ホ'],
+  Minus:        ['ほ','ホ','ー','ー'],
   Equal:        ['へ','ヘ','へ','ヘ'],
   KeyQ:         ['た','タ','た','タ'],
   KeyW:         ['て','テ','て','テ'],
