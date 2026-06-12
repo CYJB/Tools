@@ -101,6 +101,7 @@ sealed class RecognizeCotnentCommand : AsyncCommand<RecognizeCotnentCommand.Sett
 			originName += ext;
 			if (File.Exists(Path.Join(dir, originName)))
 			{
+				Console.WriteLine("{0} → {1}", originName, targetName);
 				renameItems.Add(new RenamePair(originName, targetName));
 			}
 			else

@@ -21,6 +21,11 @@ static async Task Compress(SevenZConfig config, Action<string>? progressCallback
 		"a", // 添加文件到压缩包
 		"-bsp1", // 输出压缩进度
 	};
+	// 分卷压缩。
+	if (config.Volumes != null)
+	{
+		args.Add($"-v{config.Volumes}");
+	}
 	// 设置密码。
 	if (config.Password != null)
 	{
@@ -91,6 +96,10 @@ public class SevenZConfig
 	/// 加密密码。
 	/// </summary>
 	public string? Password { get; set; }
+	/// <summary>
+	/// 分卷压缩。
+	/// </summary>
+	public string? Volumes { get; set; }
 	/// <summary>
 	/// 是否加密文件名。
 	/// </summary>

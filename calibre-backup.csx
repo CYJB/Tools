@@ -394,7 +394,14 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				}
 			}
 			// 再上传。
-			await cloud.Upload(cloudDir + name, backupTempPath, progressCallback);
+			try
+			{
+				await cloud.Upload(cloudDir + name, backupTempPath, progressCallback);
+			}
+			catch (Exception ex)
+			{
+				throw new Exception(Markup.Escape(ex.Message));
+			}
 		}
 
 		/// <summary>

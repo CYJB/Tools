@@ -18,7 +18,7 @@
 	<Compile Include="../utils/code-pages.csx" />
 	<Compile Include="../utils/baidu-pan.csx" />
 	<Compile Include="../utils/baidu-pan/defines.csx" />
-	<Compile Include="../utils/baidu-pan/file-block.csx" />
+	<Compile Include="../utils/baidu-pan/upload-context.csx" />
 	<Compile Include="../utils/config-holder.csx" />
 	<Compile Include="../utils/md5.csx" />
 	<Compile Include="../utils/string.csx" />
