@@ -22,7 +22,17 @@ const TOOLS: Tool[] = [
     name: '日文输入',
     desc: 'JIS 假名键盘，支持平假名/片假名切换、浊点合字',
   },
+  {
+    path: '/qrcode',
+    icon: 'qrcode-icon.png',
+    name: '二维码',
+    desc: '生成二维码或从图片中识别二维码内容',
+  },
 ];
+
+function isImagePath(icon: string) {
+  return icon.endsWith('.svg') || icon.endsWith('.png');
+}
 
 export default function Home() {
   const navigate = useNavigate();
@@ -35,7 +45,11 @@ export default function Home() {
       <div className="home-grid">
         {TOOLS.map((t) => (
           <button key={t.path} className="tool-card" onClick={() => navigate(t.path)}>
-            <div className="tool-icon">{t.icon}</div>
+            <div className="tool-icon">
+              {isImagePath(t.icon)
+                ? <img src={`${t.icon}`} alt="" className="tool-icon-img" />
+                : t.icon}
+            </div>
             <div className="tool-name">{t.name}</div>
             <div className="tool-desc">{t.desc}</div>
           </button>
