@@ -152,6 +152,19 @@
   font-weight: 500;
 }
 
+/* 左上角罗马字读音 */
+.jp-key-romaji {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font-size: 9px;
+  color: #6366f1;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .jp-shift {
   min-width: 60px;
   font-size: 14px;
@@ -202,6 +215,7 @@
   .jp-key-main { font-size: 15px; }
   .jp-key-en { font-size: 9px; }
   .jp-key-top { font-size: 9px; }
+  .jp-key-romaji { font-size: 7.5px; left: 3px; }
   .jp-shift, .jp-backspace { min-width: 40px; }
   .jp-enter { min-width: 52px; }
 }

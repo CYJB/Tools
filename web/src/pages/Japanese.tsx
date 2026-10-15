@@ -70,6 +70,42 @@ const HANDAKUTEN_MAP: Record<string, string> = {
   'ハ':'パ','ヒ':'ピ','フ':'プ','ヘ':'ペ','ホ':'ポ',
 };
 
+// 假名 → 罗马字读音（以平假名为键，片假名在 toRomaji 中自动转换）
+const ROMAJI_MAP: Record<string, string> = {
+  'あ':'a','い':'i','う':'u','え':'e','お':'o',
+  'か':'ka','き':'ki','く':'ku','け':'ke','こ':'ko',
+  'さ':'sa','し':'shi','す':'su','せ':'se','そ':'so',
+  'た':'ta','ち':'chi','つ':'tsu','て':'te','と':'to',
+  'な':'na','に':'ni','ぬ':'nu','ね':'ne','の':'no',
+  'は':'ha','ひ':'hi','ふ':'fu','へ':'he','ほ':'ho',
+  'ま':'ma','み':'mi','む':'mu','め':'me','も':'mo',
+  'や':'ya','ゆ':'yu','よ':'yo',
+  'ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro',
+  'わ':'wa','を':'wo','ん':'n',
+  'が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go',
+  'ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo',
+  'だ':'da','ぢ':'ji','づ':'zu','で':'de','ど':'do',
+  'ば':'ba','び':'bi','ぶ':'bu','べ':'be','ぼ':'bo',
+  'ぱ':'pa','ぴ':'pi','ぷ':'pu','ぺ':'pe','ぽ':'po',
+  'ゔ':'vu',
+  // 拗音 / 促音（小写假名）
+  'ぁ':'a','ぃ':'i','ぅ':'u','ぇ':'e','ぉ':'o',
+  'ゃ':'ya','ゅ':'yu','ょ':'yo','っ':'tsu',
+  'ー':'-',
+};
+
+// 将假名（平假名或片假名）转换为罗马字读音；无对应时返回空串
+function toRomaji(kana: string): string {
+  if (!kana) return '';
+  const ch = kana[kana.length - 1];
+  const code = ch.charCodeAt(0);
+  // 片假名 (U+30A1–U+30F6) → 平假名：码位减 0x60
+  const hira = code >= 0x30a1 && code <= 0x30f6
+    ? String.fromCharCode(code - 0x60)
+    : ch;
+  return ROMAJI_MAP[hira] ?? '';
+}
+
 const CODE_LABEL: Record<string, string> = {
   Digit1:'1', Digit2:'2', Digit3:'3', Digit4:'4', Digit5:'5',
   Digit6:'6', Digit7:'7', Digit8:'8', Digit9:'9', Digit0:'0',
@@ -243,6 +279,8 @@ export default function Japanese() {
     const shiftKana = kata ? entry[3] : entry[2];
     const showHint = shiftKana && shiftKana !== label && shiftKana !== '゛' && shiftKana !== '゜';
     const keyLabel = CODE_LABEL[code] ?? '';
+    const mainChar = shift && showHint ? shiftKana : label;
+    const romaji = toRomaji(mainChar);
     return (
       <button
         className={`jp-key${shift && showHint ? ' shifted' : ''}`}
@@ -252,10 +290,9 @@ export default function Japanese() {
         {showHint && (
           <span className="jp-key-top">{shift ? label : shiftKana}</span>
         )}
-        <span className="jp-key-main">
-          {shift && showHint ? shiftKana : label}
-        </span>
+        <span className="jp-key-main">{mainChar}</span>
         <span className="jp-key-en">{keyLabel}</span>
+        {romaji && <span className="jp-key-romaji">{romaji}</span>}
       </button>
     );
   }, [kata, shift, onKanaDown]);
