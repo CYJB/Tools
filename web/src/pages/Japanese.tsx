@@ -3,6 +3,7 @@ import './Japanese.css';
 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 const KATA_SHORTCUT = IS_MAC ? '⌘K' : 'Ctrl+K';
+const VOICE_SHORTCUT = IS_MAC ? '⌘J' : 'Ctrl+J';
 
 // JIS 配列: [平假名, 片假名, Shift平假名, Shift片假名]
 const JIS_MAP: Record<string, [string, string, string, string]> = {
@@ -128,28 +129,86 @@ const ROWS: string[][] = [
   ['KeyZ','KeyX','KeyC','KeyV','KeyB','KeyN','KeyM','Comma','Period','Slash'],
 ];
 
-function applyDakuten(text: string): string {
-  if (!text) return text;
-  const last = text[text.length - 1];
-  const combined = DAKUTEN_MAP[last];
-  return combined ? text.slice(0, -1) + combined : text + '゛';
+// 将浊点/半浊点与光标前的字符结合：可结合则替换为合字（并删除选区），
+// 否则在光标处插入原符号。返回 [新文本, 新光标位置]
+function applyMark(
+  text: string,
+  start: number,
+  end: number,
+  map: Record<string, string>,
+  mark: string,
+): [string, number] {
+  if (start > 0) {
+    const combined = map[text[start - 1]];
+    if (combined) {
+      return [text.slice(0, start - 1) + combined + text.slice(end), start];
+    }
+  }
+  return [text.slice(0, start) + mark + text.slice(end), start + 1];
 }
-function applyHandakuten(text: string): string {
-  if (!text) return text;
-  const last = text[text.length - 1];
-  const combined = HANDAKUTEN_MAP[last];
-  return combined ? text.slice(0, -1) + combined : text + '゜';
+
+// 开关状态持久化（隐私模式等场景 localStorage 可能不可用，静默降级）
+const STORE_KEY_KATA = 'jp-kana-kata';
+const STORE_KEY_VOICE = 'jp-voice-on';
+
+function readStored(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeStored(key: string, val: boolean) {
+  try {
+    localStorage.setItem(key, val ? '1' : '0');
+  } catch { /* 存储不可用时忽略 */ }
 }
 
 export default function Japanese() {
   const [text, setText] = useState('');
-  const [kata, setKata] = useState(false);
+  const [kata, setKata] = useState(() => readStored(STORE_KEY_KATA));
+  const [voiceOn, setVoiceOn] = useState(() => readStored(STORE_KEY_VOICE));
   const [shift, setShiftDisplay] = useState(false);
   const [shiftLocked, setShiftLockedDisplay] = useState(false);
   const shiftRef = useRef(false);
   const shiftLockedRef = useRef(false);
   const shiftInteractingRef = useRef(false);
+  const voiceOnRef = useRef(voiceOn);
+  const audioCacheRef = useRef(new Map<string, HTMLAudioElement>());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textRef = useRef('');
+
+  useEffect(() => { textRef.current = text; }, [text]);
+
+  // 开关状态写入本地存储
+  useEffect(() => { writeStored(STORE_KEY_KATA, kata); }, [kata]);
+  useEffect(() => { writeStored(STORE_KEY_VOICE, voiceOn); }, [voiceOn]);
+
+  // 离开页面时停止所有播放
+  useEffect(() => () => {
+    audioCacheRef.current.forEach(a => a.pause());
+  }, []);
+
+  // 播放假名读音（预生成的神经网络语音 mp3）；连按时打断上一条，避免语音堆积
+  const speakChar = useCallback((char: string) => {
+    if (!voiceOnRef.current) return;
+    const cache = audioCacheRef.current;
+    let audio = cache.get(char);
+    if (!audio) {
+      const hex = char.codePointAt(0)!.toString(16).padStart(4, '0');
+      audio = new Audio(`${import.meta.env.BASE_URL}voice/u${hex}.mp3`);
+      cache.set(char, audio);
+    }
+    audio.currentTime = 0;
+    audio.play().catch(() => { /* 忽略播放失败（如音频缺失） */ });
+  }, []);
+
+  const toggleVoice = useCallback(() => {
+    const next = !voiceOnRef.current;
+    voiceOnRef.current = next;
+    setVoiceOn(next);
+    if (!next) audioCacheRef.current.forEach(a => a.pause());
+  }, []);
 
   const setShift = useCallback((val: boolean) => {
     shiftRef.current = val;
@@ -173,16 +232,37 @@ export default function Japanese() {
     });
   }, []);
 
+  const setCaret = useCallback((pos: number) => {
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.selectionStart = el.selectionEnd = pos;
+      el.focus();
+    });
+  }, []);
+
   const handleKana = useCallback((code: string) => {
     const entry = JIS_MAP[code];
     if (!entry) return;
     const sh = shiftRef.current;
     const idx = kata ? (sh ? 3 : 1) : (sh ? 2 : 0);
     const char = entry[idx];
-    if (char === '゛') { setText(t => applyDakuten(t)); return; }
-    if (char === '゜') { setText(t => applyHandakuten(t)); return; }
+    if (char === '゛' || char === '゜') {
+      const map = char === '゛' ? DAKUTEN_MAP : HANDAKUTEN_MAP;
+      const el = textareaRef.current;
+      const cur = el ? el.value : textRef.current;
+      const start = el ? el.selectionStart : cur.length;
+      const end = el ? el.selectionEnd : cur.length;
+      const [next, caret] = applyMark(cur, start, end, map, char);
+      setText(next);
+      if (el) setCaret(caret);
+      // 播放实际生效的字符：合字（が/ぱ）或原符号
+      speakChar(next[caret - 1]);
+      return;
+    }
     insertAtCursor(char);
-  }, [kata, insertAtCursor]);
+    speakChar(char);
+  }, [kata, insertAtCursor, setCaret, speakChar]);
 
   // 物理键盘：不拦截 Ctrl/Meta 快捷键（Ctrl+K / Cmd+K 切换假名模式）
   useEffect(() => {
@@ -190,6 +270,11 @@ export default function Japanese() {
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyK') {
         e.preventDefault();
         setKata(v => !v);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyJ') {
+        e.preventDefault();
+        toggleVoice();
         return;
       }
       if (e.ctrlKey || e.metaKey) return;
@@ -215,7 +300,7 @@ export default function Japanese() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [handleKana, setShift]);
+  }, [handleKana, setShift, toggleVoice]);
 
   // 全局 pointerup：处理虚拟 Shift 的释放与锁定逻辑
   useEffect(() => {
@@ -335,6 +420,14 @@ export default function Japanese() {
         >
           {kata ? '片假名' : '平假名'}
           <span className="jp-shortcut">{KATA_SHORTCUT}</span>
+        </button>
+        <button
+          className={`jp-toggle ${voiceOn ? 'active' : ''}`}
+          onClick={toggleVoice}
+          title="按键时播放假名读音"
+        >
+          {voiceOn ? '语音开' : '语音关'}
+          <span className="jp-shortcut">{VOICE_SHORTCUT}</span>
         </button>
         <button className="jp-toggle" onClick={() => { setText(''); textareaRef.current?.focus(); }}>
           清空

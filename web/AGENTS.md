@@ -44,7 +44,7 @@ web/
 |:----:|:----:|------|
 | `#/` | `Home` | 首页，展示工具卡片，点击跳转各工具页面 |
 | `#/lyric` | `Lyric` | 多语言 LRC 歌词合并，支持拖拽上传、自动匹配、手动修正 |
-| `#/japanese` | `Japanese` | JIS 假名键盘，支持平假名/片假名切换、浊点合字 |
+| `#/japanese` | `Japanese` | JIS 假名键盘，支持平假名/片假名切换（⌘K）、浊点合字、罗马字读音标注、按键语音（⌘J，预生成 mp3 于 `public/voice/`，由 `scripts/generate-voice.py` 生成） |
 
 ## 添加新页面
 
