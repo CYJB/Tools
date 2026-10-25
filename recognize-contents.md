@@ -6,7 +6,7 @@
 
 ## 用法
 
-`dotnet run recognize-content.cs -- <path> [extra-prompt] [OPTIONS]`
+`dotnet run recognize-contents.cs -- <path> [extra-prompt] [OPTIONS]`
 
 这是 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)，不需要 `.csproj`：文件顶部的 `#:include` 引入 `utils/config-holder.cs`，`#:package` 声明 NuGet 包，包版本由 `Directory.Packages.props` 集中管理。首次运行会还原依赖并编译（几秒钟），之后走构建缓存。
 
@@ -38,19 +38,19 @@
 先看结果、确认无误后再改名：
 
 ```powershell
-dotnet run recognize-content.cs -- '.\002.jpg' --dry-run
+dotnet run recognize-contents.cs -- '.\002.jpg' --dry-run
 ```
 
 批量处理时跳过确认：
 
 ```powershell
-dotnet run recognize-content.cs -- '.\002.jpg' --yes
+dotnet run recognize-contents.cs -- '.\002.jpg' --yes
 ```
 
 需要可执行文件、并且希望只有一个文件时，用 `publish`（`build` 只能产出编译产物，散落的 dll、`*.deps.json`、`*.runtimeconfig.json` 都是它的正常输出；单文件只有 `publish` 才会打包）：
 
 ```powershell
-dotnet publish recognize-content.cs
+dotnet publish recognize-contents.cs
 ```
 
 发布配置已经写在文件顶部，所以不用带任何参数：
@@ -63,11 +63,11 @@ dotnet publish recognize-content.cs
 #:property DebugType=embedded                   // pdb 内嵌，不产生额外的 .pdb
 ```
 
-默认输出到 `artifacts/recognize-content/recognize-content.exe`，**就一个文件**，约 2.8 MB。想换输出目录加 `-o <目录>`。
+默认输出到 `artifacts/recognize-contents/recognize-contents.exe`，**就一个文件**，约 2.8 MB。想换输出目录加 `-o <目录>`。
 
 其它变体：
 
-- 要免装运行时（自包含）：`dotnet publish recognize-content.cs -p:SelfContained=true -p:EnableCompressionInSingleFile=true`，约 37 MB。单文件压缩只在自包含时可用，依赖框架时带上它会被 `NETSDK1176` 拒绝。
+- 要免装运行时（自包含）：`dotnet publish recognize-contents.cs -p:SelfContained=true -p:EnableCompressionInSingleFile=true`，约 37 MB。单文件压缩只在自包含时可用，依赖框架时带上它会被 `NETSDK1176` 拒绝。
 - 原生 AOT 在这里不可行：需要反射式 JSON 序列化，而 AOT 会禁用它，`Spectre.Console.Cli` 也不支持 AOT。
 
 ## 提示词与失败排查

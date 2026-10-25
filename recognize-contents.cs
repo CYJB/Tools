@@ -10,7 +10,7 @@
 // 基于文件的应用默认按 AOT 发布配置构建，会关掉「基于反射的 JSON 序列化」；
 // 这里既要读配置文件、又要反序列化模型输出，所以关掉 AOT，让 JsonSerializer 能用反射。
 #:property PublishAot=false
-// 发布成单文件 exe：`dotnet publish recognize-content.cs` 只产出一个 recognize-content.exe。
+// 发布成单文件 exe：`dotnet publish recognize-contents.cs` 只产出一个 recognize-contents.exe。
 // 采用依赖框架（framework-dependent）的方式，体积只有几 MB，运行时用本机安装的 .NET 10。
 // 注意：单文件压缩（EnableCompressionInSingleFile）只在自包含发布时可用。
 #:property PublishSingleFile=true
@@ -33,13 +33,13 @@ using OllamaSharp.Models.Chat;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-var app = new CommandApp<RecognizeContentCommand>();
+var app = new CommandApp<RecognizeContentsCommand>();
 return await app.RunAsync(args);
 
 /// <summary>
 /// 识别漫画目录的命令。
 /// </summary>
-sealed class RecognizeContentCommand : AsyncCommand<RecognizeContentCommand.Settings>
+sealed class RecognizeContentsCommand : AsyncCommand<RecognizeContentsCommand.Settings>
 {
 	/// <summary>
 	/// 命令的设置。
@@ -281,7 +281,7 @@ sealed class RecognizeContentCommand : AsyncCommand<RecognizeContentCommand.Sett
 				AnsiConsole.MarkupLine("[yellow]最后一次识别的结果如下（仅供参考，未重命名）：[/]");
 				Render(rejected, files, 0);
 			}
-			AnsiConsole.MarkupLine("[yellow]可以试着调整提示词，例如：dotnet run recognize-content.cs -- <path> \"页码是右侧圆形里的数字\"[/]");
+			AnsiConsole.MarkupLine("[yellow]可以试着调整提示词，例如：dotnet run recognize-contents.cs -- <path> \"页码是右侧圆形里的数字\"[/]");
 			return 1;
 		}
 

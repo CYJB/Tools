@@ -8,7 +8,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "calibre-backup", "project\c
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "pack-epub", "project\pack-epub.csproj", "{A35D39E5-6A45-AE0E-38D3-4942B910ECF8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "recognize-content", "project\recognize-content.csproj", "{71902531-0D48-8EC6-4DC6-D855196BE732}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "recognize-contents", "project\recognize-contents.csproj", "{71902531-0D48-8EC6-4DC6-D855196BE732}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
