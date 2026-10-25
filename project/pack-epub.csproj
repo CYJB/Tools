@@ -2,27 +2,43 @@
 
   <PropertyGroup>
 	<OutputType>WinExe</OutputType>
-	<TargetFramework>net6.0-windows</TargetFramework>
+	<TargetFramework>net10.0-windows</TargetFramework>
 	<Nullable>enable</Nullable>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Authors>CYJB</Authors>
+	<!-- 源文件是 .NET 10 的基于文件的应用，需要放开 `#!` / `#:` 指令。 -->
+	<Features>FileBasedProgram</Features>
   </PropertyGroup>
 
+  <!-- 包版本由 ../Directory.Packages.props 集中管理。 -->
   <ItemGroup>
-	<PackageReference Include="Spectre.Console" Version="0.54.0" />
-	<PackageReference Include="Spectre.Console.Cli" Version="0.53.1" />
+	<PackageReference Include="Cyjb" />
+	<PackageReference Include="Cyjb.Markdown" />
+	<PackageReference Include="Magick.NET.Core" />
+	<PackageReference Include="Magick.NET-Q8-x64" />
+	<PackageReference Include="MimeMapping" />
+	<PackageReference Include="Spectre.Console" />
+	<PackageReference Include="Spectre.Console.Cli" />
+	<PackageReference Include="System.Text.Encoding.CodePages" />
+	<PackageReference Include="Xabe.FFmpeg" />
   </ItemGroup>
 
   <ItemGroup>
-	<Compile Include="../pack-epub.csx" />
-	<Compile Include="../utils/7z.csx" />
-	<Compile Include="../utils/calibre.csx" />
-	<Compile Include="../utils/compress.csx" />
-	<Compile Include="../utils/config-holder.csx" />
-	<Compile Include="../utils/epub/exporter.csx" />
-	<Compile Include="../utils/epub/navigation.csx" />
-	<Compile Include="../utils/file.csx" />
-	<Compile Include="../utils/task.csx" />
+	<Compile Include="../pack-epub.cs" />
+	<Compile Include="../utils/7z.cs" />
+	<Compile Include="../utils/calibre.cs" />
+	<Compile Include="../utils/code-pages.cs" />
+	<Compile Include="../utils/compress.cs" />
+	<Compile Include="../utils/config-holder.cs" />
+	<Compile Include="../utils/epub/exporter.cs" />
+	<Compile Include="../utils/epub/metadata.cs" />
+	<Compile Include="../utils/epub/navigation.cs" />
+	<Compile Include="../utils/epub/renderer.cs" />
+	<Compile Include="../utils/epub/xml.cs" />
+	<Compile Include="../utils/file.cs" />
+	<Compile Include="../utils/image.cs" />
+	<Compile Include="../utils/task.cs" />
+	<Compile Include="../utils/video.cs" />
   </ItemGroup>
 
 </Project>

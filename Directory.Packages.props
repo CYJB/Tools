@@ -1,0 +1,25 @@
+<Project>
+  <!--
+    基于文件的应用（.cs）：`#:include` 允许被引用文件里再写 `#:include` / `#:package`，
+    这些指令的实际作用是实验性的，需要显式打开。
+  -->
+  <PropertyGroup>
+	<ExperimentalFileBasedProgramEnableIncludeDirective>true</ExperimentalFileBasedProgramEnableIncludeDirective>
+	<ExperimentalFileBasedProgramEnableTransitiveDirectives>true</ExperimentalFileBasedProgramEnableTransitiveDirectives>
+	<!-- .cs 里的 `#:package` 不写版本，统一在这里管理。 -->
+	<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageVersion Include="Cyjb" Version="1.0.26" />
+	<PackageVersion Include="Cyjb.Markdown" Version="1.0.3" />
+	<PackageVersion Include="Magick.NET.Core" Version="14.11.0" />
+	<PackageVersion Include="Magick.NET-Q8-x64" Version="14.11.0" />
+	<PackageVersion Include="MimeMapping" Version="4.0.0" />
+	<PackageVersion Include="OllamaSharp" Version="5.4.25" />
+	<PackageVersion Include="Spectre.Console" Version="0.57.2" />
+	<PackageVersion Include="Spectre.Console.Cli" Version="0.55.0" />
+	<PackageVersion Include="System.Text.Encoding.CodePages" Version="10.0.5" />
+	<PackageVersion Include="Xabe.FFmpeg" Version="5.2.6" />
+  </ItemGroup>
+</Project>

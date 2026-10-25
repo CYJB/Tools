@@ -6,12 +6,15 @@
 	<Nullable>enable</Nullable>
 	<ImplicitUsings>enable</ImplicitUsings>
 	<Authors>CYJB</Authors>
+	<!-- 源文件是 .NET 10 的基于文件的应用，需要放开 `#!` / `#:` 指令。 -->
+	<Features>FileBasedProgram</Features>
   </PropertyGroup>
 
+  <!-- 包版本由 ../Directory.Packages.props 集中管理。 -->
   <ItemGroup>
-	<PackageReference Include="OllamaSharp" Version="5.4.25" />
-	<PackageReference Include="Spectre.Console" Version="0.54.0" />
-	<PackageReference Include="Spectre.Console.Cli" Version="0.53.1" />
+	<PackageReference Include="OllamaSharp" />
+	<PackageReference Include="Spectre.Console" />
+	<PackageReference Include="Spectre.Console.Cli" />
   </ItemGroup>
 
   <ItemGroup>

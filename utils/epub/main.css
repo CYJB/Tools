@@ -9,10 +9,6 @@ p {
   text-indent: 2em;
 }
 
-li {
-  text-indent: 2em;
-}
-
 blockquote footer {
   text-align: right;
   margin-left: 0;
@@ -136,7 +132,9 @@ h6 {
   letter-spacing: 0.5px;
 }
 
-.trans-pair p {
+.trans-pair p,
+.trans-pair span,
+.trans-pair h2 {
   margin: 0;
   line-height: 1.5;
 }
