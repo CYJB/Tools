@@ -2,36 +2,35 @@
 
   <PropertyGroup>
 	<OutputType>WinExe</OutputType>
-	<TargetFramework>net6.0-windows</TargetFramework>
+	<TargetFramework>net10.0-windows</TargetFramework>
 	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
 	<Authors>CYJB</Authors>
-	<!--
-	  .csx 是 dotnet-script 脚本，包版本由脚本里的 `#r "nuget: 包, 版本"` 决定，
-	  所以这里不使用 ../Directory.Packages.props 的中央包管理，直接写死版本。
-	-->
-	<ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+	<!-- 源文件是 .NET 10 的基于文件的应用，需要放开 `#!` / `#:` 指令。 -->
+	<Features>FileBasedProgram</Features>
   </PropertyGroup>
 
+  <!-- 包版本由 ../Directory.Packages.props 集中管理。 -->
   <ItemGroup>
-	<PackageReference Include="Spectre.Console" Version="0.54.0" />
-	<PackageReference Include="Spectre.Console.Cli" Version="0.53.1" />
+	<PackageReference Include="Spectre.Console" />
+	<PackageReference Include="Spectre.Console.Cli" />
   </ItemGroup>
 
   <ItemGroup>
-	<Compile Include="../calibre-backup.csx" />
-	<Compile Include="../utils/7z.csx" />
-	<Compile Include="../utils/code-pages.csx" />
-	<Compile Include="../utils/baidu-pan.csx" />
-	<Compile Include="../utils/baidu-pan/access-token.csx" />
-	<Compile Include="../utils/baidu-pan/defines.csx" />
-	<Compile Include="../utils/baidu-pan/error.csx" />
-	<Compile Include="../utils/baidu-pan/list-query.csx" />
-	<Compile Include="../utils/baidu-pan/upload-context.csx" />
-	<Compile Include="../utils/config-holder.csx" />
-	<Compile Include="../utils/http.csx" />
-	<Compile Include="../utils/json/bool-converter.csx" />
-	<Compile Include="../utils/md5.csx" />
-	<Compile Include="../utils/string.csx" />
+	<Compile Include="../calibre-backup.cs" />
+	<Compile Include="../utils/7z.cs" />
+	<Compile Include="../utils/baidu-pan.cs" />
+	<Compile Include="../utils/baidu-pan/access-token.cs" />
+	<Compile Include="../utils/baidu-pan/defines.cs" />
+	<Compile Include="../utils/baidu-pan/error.cs" />
+	<Compile Include="../utils/baidu-pan/list-query.cs" />
+	<Compile Include="../utils/baidu-pan/upload-context.cs" />
+	<Compile Include="../utils/code-pages.cs" />
+	<Compile Include="../utils/config-holder.cs" />
+	<Compile Include="../utils/http.cs" />
+	<Compile Include="../utils/json/bool-converter.cs" />
+	<Compile Include="../utils/md5.cs" />
+	<Compile Include="../utils/string.cs" />
   </ItemGroup>
 
 </Project>

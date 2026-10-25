@@ -1,13 +1,13 @@
-日常小工具合集。命令行工具基于 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)（`.cs`）和 [dotnet-script](https://github.com/dotnet-script/dotnet-script) 脚本（`.csx`），Web 工具基于 React + Vite。
+日常小工具合集。命令行工具基于 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)（`.cs`），Web 工具基于 React + Vite。
 
 ## 技术栈
 
 | 层        | 技术 |
 |:---------:|------|
-| 脚本运行  | [基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)（.NET 10, C# `.cs`，`dotnet run <file>`）、[dotnet-script](https://github.com/dotnet-script/dotnet-script)（`.csx`） |
+| 脚本运行  | [基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)（.NET 10, C# `.cs`，`dotnet run <file>`） |
 | CLI 框架  | [Spectre.Console.Cli](https://spectreconsole.net/) |
-| NuGet 包  | Spectre.Console, Cyjb, OllamaSharp 等（`.cs` 用 `#:package` 并由 `Directory.Packages.props` 管理版本，`.csx` 用 `#r`） |
-| 图片压缩  | [ImageMagick](https://imagemagick.org/)（外部命令行，自动安装） |
+| NuGet 包  | Spectre.Console, Cyjb, OllamaSharp 等（`#:package` 声明，版本由 `Directory.Packages.props` 集中管理） |
+| 图片压缩  | ImageMagick（Magick.NET） |
 | 视频压缩  | [ffmpeg](https://ffmpeg.org/)（`utils/ffmpeg/` 内自带二进制） |
 | Web 前端  | React 19 + TypeScript + Vite + [Shineout](https://sheinsight.github.io/shineout-next/) UI |
 | CI/CD     | GitHub Actions → GitHub Pages（`.github/workflows/deploy-web.yml`） |
@@ -16,15 +16,15 @@
 
 ```
 .
-├── calibre-backup.csx / .md    # calibre 书库备份（→百度网盘）
-├── compress-media.csx / .md    # 图片/视频压缩
+├── calibre-backup.cs / .md     # calibre 书库备份（→百度网盘）
+├── compress-media.cs / .md     # 图片/视频压缩
 ├── convert-media.cs            # 音频转 mp3、图片转 png/jpg
 ├── convert2utf8.cs             # 文本文件转 UTF-8
 ├── pack-epub.cs / .md          # 漫画打包 epub
 ├── pg.cs                       # 按站点生成固定密码
 ├── recognize-contents.cs / .md # 图片识别书籍目录（ollama）
 ├── rename.cs                   # 重命名图片/视频
-├── Directory.Packages.props    # .cs 应用的中央包管理
+├── Directory.Packages.props    # 中央包管理
 ├── utils/                      # 共享工具库 → utils/CONTEXT.md
 ├── web/                        # Web 工具 → web/CONTEXT.md
 ├── project/                    # .csproj（仅用于 IDE 智能提示）
@@ -35,7 +35,7 @@
 
 ## 命令行工具
 
-`.cs` 是 .NET 10 的基于文件的应用，用 `dotnet run <脚本名>.cs -- [参数]` 运行：文件顶部用 `#:include` 引用 `utils/` 下的共享模块、用 `#:package` 声明 NuGet 包（版本由 `Directory.Packages.props` 集中管理）。`.csx` 是 dotnet-script 脚本，用 `dotnet script <脚本名>.csx -- [参数]` 运行，通过 `#load` 引用共享模块、`#r` 引用 NuGet 包。两种入口都定义一个继承 `AsyncCommand<T>`（或同步的 `Command<T>`）的 Spectre.Console.Cli 命令类。
+用 `dotnet run <脚本名>.cs -- [参数]` 运行：文件顶部用 `#:include` 引用 `utils/` 下的共享模块、用 `#:package` 声明 NuGet 包（版本由 `Directory.Packages.props` 集中管理）。每个入口都定义一个继承 `AsyncCommand<T>`（或同步的 `Command<T>`）的 Spectre.Console.Cli 命令类。
 
 | 脚本 | 说明 | 依赖的 utils 模块 |
 |:----:|------|:------------------:|
@@ -45,12 +45,12 @@
 | `convert-media.cs` | 把 flac/wav/wv 转成 320Kbps mp3，jp2/heic/webp 转成 png（`--image-format jpg` 可转 jpg） | file, task, video |
 | `convert2utf8.cs` | 把 txt 文本转换成 UTF-8 编码 | file, task |
 | `pg.cs` | 按「主密码 + 站点」生成固定密码，站点配置在 `pg.config.json` | config-holder |
-| `calibre-backup.csx` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
-| `compress-media.csx` | 根据分辨率压缩图片和视频 | compress, console, task |
+| `calibre-backup.cs` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
+| `compress-media.cs` | 根据分辨率压缩图片和视频 | compress, console, task |
 
-`.cs` 入口只需要 `#:include` 直接依赖的模块，间接依赖由各模块自己 `#:include`（因此同一个文件可能被多次引入，编译时的 CS2002 警告属正常现象）。`utils/` 下同一套工具同时维护 `.cs` 和 `.csx` 两份，改逻辑时两份都要改，详见 [utils/CONTEXT.md](utils/CONTEXT.md)。
+入口只需要 `#:include` 直接依赖的模块，间接依赖由各模块自己 `#:include`（因此同一个文件可能被多次引入，编译时的 CS2002 警告属正常现象）。详见 [utils/CONTEXT.md](utils/CONTEXT.md)。
 
-`project/` 下的 `.csproj` 只用于 IDE 智能提示，不参与 `dotnet run`：`.cs` 的项目用 `<Features>FileBasedProgram</Features>` 放开 `#!` / `#:` 指令、包版本交给 `Directory.Packages.props` 集中管理；`.csx` 的项目（`calibre-backup`）关闭中央包管理，版本与脚本里的 `#r` 保持一致。
+`project/` 下的 `.csproj` 只用于 IDE 智能提示，不参与 `dotnet run`：用 `<Features>FileBasedProgram</Features>` 放开 `#!` / `#:` 指令，包版本交给 `Directory.Packages.props` 集中管理。
 
 ## 在工作区发布 exe 的坑（重要）
 

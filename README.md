@@ -1,6 +1,6 @@
 # Tools
 
-日常用到的各类小工具，基于 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)（`.cs`）和 [dotnet-script](https://github.com/dotnet-script/dotnet-script)（`.csx`）。
+日常用到的各类小工具，基于 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)（`.cs`，`dotnet run <file>` 即可运行）。
 
 - [calibre 书库备份](./calibre-backup.md)
 - [压缩图片和视频](./compress-media.md)

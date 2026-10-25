@@ -35,7 +35,7 @@ public class ConfigHolder<T>
 
 	public ConfigHolder([CallerFilePath] string? path = null)
 	{
-		this.path = Path.ChangeExtension(path, ".config.json")!;
+		this.path = GetConfigPath(path);
 		if (File.Exists(this.path))
 		{
 			string json = File.ReadAllText(this.path);
@@ -45,6 +45,18 @@ public class ConfigHolder<T>
 		{
 			config = new T();
 		}
+	}
+
+	/// <summary>
+	/// 返回配置文件路径：传进来的是脚本路径时换成同名的 .config.json，传进来的是配置文件路径时直接使用。
+	/// </summary>
+	private static string GetConfigPath(string? path)
+	{
+		if (string.IsNullOrEmpty(path))
+		{
+			return "";
+		}
+		return path.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ? path : Path.ChangeExtension(path, ".config.json")!;
 	}
 
 	/// <summary>

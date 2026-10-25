@@ -1,22 +1,29 @@
+#!/usr/bin/env -S dotnet --
+
 /**
  * 压缩图片或视频。
- * 压缩功能依赖 https://imagemagick.org/
  */
-#load "utils/compress.csx"
-#load "utils/console.csx"
-#load "utils/task.csx"
-#r "nuget: Spectre.Console, 0.54.0"
-#r "nuget: Spectre.Console.Cli, 0.53.1"
-
+// 这里只 include 直接依赖的模块，它们各自会 include 自己的依赖。
+#:include utils/compress.cs
+#:include utils/console.cs
+#:package Spectre.Console
+#:package Spectre.Console.Cli
+// 发布成单文件 exe：`dotnet publish compress-media.cs` 只产出一个 compress-media.exe。
+// Magick.NET 的原生库用 IncludeNativeLibrariesForSelfExtract 打进单文件，运行时自解压到临时目录。
+#:property PublishAot=false
+#:property PublishSingleFile=true
+#:property SelfContained=false
+#:property RuntimeIdentifier=win-x64
+#:property IncludeNativeLibrariesForSelfExtract=true
+#:property DebugType=embedded
 #nullable enable
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
-using System.Threading;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-return await RunAsyncWithCancellation<CompressCommand>(Args.ToArray());
+return await ConsoleApp.RunAsyncWithCancellation<CompressCommand>(args);
 
 /// <summary>
 /// 压缩命令。
@@ -29,7 +36,7 @@ sealed class CompressCommand : AsyncCommand<CompressCommand.Settings>
 	public sealed class Settings : CommandSettings
 	{
 		private const string CompressOpt = @"
-- 0: 不处理
+- ignore: 不处理
 - 720: 压缩到不超过 1280×720
 - 720r: 压缩到不超过 1280×720 或 720×1280
 - 1080: 压缩到不超过 1920×1080
@@ -77,9 +84,14 @@ sealed class CompressCommand : AsyncCommand<CompressCommand.Settings>
 	/// <summary>
 	/// 执行命令。
 	/// </summary>
-	public override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
+	protected override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
 	{
 		var currentDir = settings.Path ?? Directory.GetCurrentDirectory();
+		if (!Directory.Exists(currentDir))
+		{
+			AnsiConsole.MarkupLine($"[red]无效的路径 {currentDir.EscapeMarkup()}[/]");
+			return 1;
+		}
 		CompressConfig config = new();
 		if (settings.Recursion.IsSet)
 		{
@@ -101,7 +113,7 @@ sealed class CompressCommand : AsyncCommand<CompressCommand.Settings>
 		{
 			config.Extension = settings.Extension.Value;
 		}
-		var tasks = await AnsiConsole.Status().StartAsync($"扫描目录...", ctx => GetCompressTasksAsync(currentDir, (desc) =>
+		var tasks = await AnsiConsole.Status().StartAsync($"扫描目录...", ctx => Compress.GetTasksAsync(currentDir, (desc) =>
 		{
 			ctx.Status($"检查文件 {desc}...");
 		}, config, settings.Save));
@@ -110,7 +122,7 @@ sealed class CompressCommand : AsyncCommand<CompressCommand.Settings>
 			AnsiConsole.MarkupLine("[green]没有要压缩的文件[/]");
 			return 0;
 		}
-		await RunTaskAsync("压缩文件", tasks, cancellationToken);
+		await TaskRun.RunAsync("压缩文件", tasks, cancellationToken);
 		return 0;
 	}
 }

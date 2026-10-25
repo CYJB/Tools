@@ -2,10 +2,6 @@
   "fileOptions": {
     "userExcludeSearchPatterns": []
   },
-  "script": {
-    "enableScriptNuGetReferences": true,
-    "defaultTargetFramework": "net9.0"
-  },
   "FormattingOptions": {
     "organizeImports": true,
     "enableEditorConfigSupport": true
