@@ -8,6 +8,8 @@
 	<ExperimentalFileBasedProgramEnableTransitiveDirectives>true</ExperimentalFileBasedProgramEnableTransitiveDirectives>
 	<!-- .cs 里的 `#:package` 不写版本，统一在这里管理。 -->
 	<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+	<!-- 让下面的 PackageVersion 也能顶掉传递依赖的版本（例如 Xabe.FFmpeg 带的 Newtonsoft.Json 9.0.1）。 -->
+	<CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +18,7 @@
 	<PackageVersion Include="Magick.NET.Core" Version="14.11.0" />
 	<PackageVersion Include="Magick.NET-Q8-x64" Version="14.11.0" />
 	<PackageVersion Include="MimeMapping" Version="4.0.0" />
+	<PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
 	<PackageVersion Include="OllamaSharp" Version="5.4.25" />
 	<PackageVersion Include="Spectre.Console" Version="0.57.2" />
 	<PackageVersion Include="Spectre.Console.Cli" Version="0.55.0" />

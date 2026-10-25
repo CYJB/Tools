@@ -4,6 +4,9 @@
 
 using Xabe.FFmpeg;
 
+/// <summary>
+/// ffmpeg 与视频相关的工具。
+/// </summary>
 class VideoUtils
 {
 	/// <summary>
@@ -13,6 +16,9 @@ class VideoUtils
 		".mp4", ".avi", ".mvk", ".mov",
 	];
 
+	/// <summary>
+	/// 是否已配置过 ffmpeg 路径。
+	/// </summary>
 	private static bool hasSetupFFmpeg = false;
 
 	/// <summary>

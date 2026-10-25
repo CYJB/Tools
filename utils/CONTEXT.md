@@ -16,7 +16,7 @@
 | `7z` | 7z 命令行封装（`SevenZ.Compress`，加密压缩/分卷） | ✔ | ✔ |
 | `calibre` | Calibre 数据库和内容服务器交互 | ✔ | ✔ |
 | `video` / `ffmpeg` | [Xabe.FFmpeg](https://github.com/tomaszzmuda/Xabe.FFmpeg) 封装、视频扩展名与 ffmpeg 路径设置（`.cs` 中为 `VideoUtils`） | ✔ | ✔ |
-| `image` | ImageMagick 封装（`.cs` 中为 `ImageUtils`） | ✔ | ✔ |
+| `image` | ImageMagick 封装、图片扩展名与 MagickFormat 映射（`.cs` 中为 `ImageUtils`） | ✔ | ✔ |
 | `task` | 多线程任务执行与取消辅助（`.cs` 中为 `TaskRun.RunAsync`） | ✔ | ✔ |
 | `file` | 文件操作工具（封面判断、安全删除、脚本目录，`.cs` 中为 `FileUtils`） | ✔ | ✔ |
 | `code-pages` | 字符编码支持（`.cs` 中为 `CodePages.RegisterGBK`） | ✔ | ✔ |

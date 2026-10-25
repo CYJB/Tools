@@ -20,6 +20,7 @@
 ├── compress-media.csx / .md    # 图片/视频压缩
 ├── pack-epub.cs / .md          # 漫画打包 epub
 ├── recognize-contents.cs / .md # 图片识别书籍目录（ollama）
+├── rename.cs                   # 重命名图片/视频
 ├── Directory.Packages.props    # .cs 应用的中央包管理
 ├── utils/                      # 共享工具库 → utils/CONTEXT.md
 ├── web/                        # Web 工具 → web/CONTEXT.md
@@ -31,12 +32,13 @@
 
 ## 命令行工具
 
-`.cs` 是 .NET 10 的基于文件的应用，用 `dotnet run <脚本名>.cs -- [参数]` 运行：文件顶部用 `#:include` 引用 `utils/` 下的共享模块、用 `#:package` 声明 NuGet 包（版本由 `Directory.Packages.props` 集中管理）。`.csx` 是 dotnet-script 脚本，用 `dotnet script <脚本名>.csx -- [参数]` 运行，通过 `#load` 引用共享模块、`#r` 引用 NuGet 包。两种入口都定义一个继承 `AsyncCommand<T>` 的 Spectre.Console.Cli 命令类。
+`.cs` 是 .NET 10 的基于文件的应用，用 `dotnet run <脚本名>.cs -- [参数]` 运行：文件顶部用 `#:include` 引用 `utils/` 下的共享模块、用 `#:package` 声明 NuGet 包（版本由 `Directory.Packages.props` 集中管理）。`.csx` 是 dotnet-script 脚本，用 `dotnet script <脚本名>.csx -- [参数]` 运行，通过 `#load` 引用共享模块、`#r` 引用 NuGet 包。两种入口都定义一个继承 `AsyncCommand<T>`（或同步的 `Command<T>`）的 Spectre.Console.Cli 命令类。
 
 | 脚本 | 说明 | 依赖的 utils 模块 |
 |:----:|------|:------------------:|
 | `pack-epub.cs` | 漫画打包 epub，支持压缩和自动添加到 Calibre | 7z, calibre, compress, config-holder, epub, file, task, video |
 | `recognize-contents.cs` | 通过 ollama 大模型识别图片中的目录并重命名文件 | config-holder |
+| `rename.cs` | 重命名目录里的图片和视频，可选把文件数、总大小加到目录名后 | image, video |
 | `calibre-backup.csx` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
 | `compress-media.csx` | 根据分辨率压缩图片和视频 | compress, console, task |
 

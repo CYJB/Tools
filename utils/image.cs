@@ -4,6 +4,9 @@
 // https://github.com/dlemstra/Magick.NET
 using ImageMagick;
 
+/// <summary>
+/// ImageMagick 相关的工具。
+/// </summary>
 class ImageUtils
 {
 	/// <summary>
