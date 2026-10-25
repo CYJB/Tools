@@ -29,7 +29,7 @@
 ├── web/                        # Web 工具 → web/CONTEXT.md
 ├── project/                    # .csproj（仅用于 IDE 智能提示）
 ├── images/                     # 文档图片
-├── Workspace_Tools.sln         # VS 解决方案
+├── Tools.sln                   # VS 解决方案
 └── omnisharp.json              # OmniSharp 配置
 ```
 
