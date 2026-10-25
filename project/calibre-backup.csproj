@@ -1,10 +1,15 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
 	<OutputType>WinExe</OutputType>
 	<TargetFramework>net6.0-windows</TargetFramework>
 	<Nullable>enable</Nullable>
 	<Authors>CYJB</Authors>
+	<!--
+	  .csx 是 dotnet-script 脚本，包版本由脚本里的 `#r "nuget: 包, 版本"` 决定，
+	  所以这里不使用 ../Directory.Packages.props 的中央包管理，直接写死版本。
+	-->
+	<ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,9 +22,14 @@
 	<Compile Include="../utils/7z.csx" />
 	<Compile Include="../utils/code-pages.csx" />
 	<Compile Include="../utils/baidu-pan.csx" />
+	<Compile Include="../utils/baidu-pan/access-token.csx" />
 	<Compile Include="../utils/baidu-pan/defines.csx" />
+	<Compile Include="../utils/baidu-pan/error.csx" />
+	<Compile Include="../utils/baidu-pan/list-query.csx" />
 	<Compile Include="../utils/baidu-pan/upload-context.csx" />
 	<Compile Include="../utils/config-holder.csx" />
+	<Compile Include="../utils/http.csx" />
+	<Compile Include="../utils/json/bool-converter.csx" />
 	<Compile Include="../utils/md5.csx" />
 	<Compile Include="../utils/string.csx" />
   </ItemGroup>

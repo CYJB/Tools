@@ -18,7 +18,10 @@
 .
 ├── calibre-backup.csx / .md    # calibre 书库备份（→百度网盘）
 ├── compress-media.csx / .md    # 图片/视频压缩
+├── convert-media.cs            # 音频转 mp3、图片转 png/jpg
+├── convert2utf8.cs             # 文本文件转 UTF-8
 ├── pack-epub.cs / .md          # 漫画打包 epub
+├── pg.cs                       # 按站点生成固定密码
 ├── recognize-contents.cs / .md # 图片识别书籍目录（ollama）
 ├── rename.cs                   # 重命名图片/视频
 ├── Directory.Packages.props    # .cs 应用的中央包管理
@@ -39,6 +42,9 @@
 | `pack-epub.cs` | 漫画打包 epub，支持压缩和自动添加到 Calibre | 7z, calibre, compress, config-holder, epub, file, task, video |
 | `recognize-contents.cs` | 通过 ollama 大模型识别图片中的目录并重命名文件 | config-holder |
 | `rename.cs` | 重命名目录里的图片和视频，可选把文件数、总大小加到目录名后 | image, video |
+| `convert-media.cs` | 把 flac/wav/wv 转成 320Kbps mp3，jp2/heic/webp 转成 png（`--image-format jpg` 可转 jpg） | file, task, video |
+| `convert2utf8.cs` | 把 txt 文本转换成 UTF-8 编码 | file, task |
+| `pg.cs` | 按「主密码 + 站点」生成固定密码，站点配置在 `pg.config.json` | config-holder |
 | `calibre-backup.csx` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
 | `compress-media.csx` | 根据分辨率压缩图片和视频 | compress, console, task |
 

@@ -34,6 +34,19 @@ class FileUtils
 	}
 
 	/// <summary>
+	/// 返回指定文件相对于根目录的路径，用于在进度里显示。
+	/// </summary>
+	public static string GetRelativePath(string root, string path)
+	{
+		int offset = root.Length;
+		if (!root.EndsWith(Path.DirectorySeparatorChar))
+		{
+			offset++;
+		}
+		return offset < path.Length ? path[offset..] : Path.GetFileName(path);
+	}
+
+	/// <summary>
 	/// 安全删除指定文件
 	/// </summary>
 	public static async Task SafeDeleteFile(string file)

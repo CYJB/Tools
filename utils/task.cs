@@ -14,10 +14,68 @@ class TaskRun
 	public static async Task RunAsync(string title, List<Func<TaskContext, Task>> tasks, CancellationToken? cancellationToken = null)
 	{
 		CancellationToken token = cancellationToken == null ? CancellationToken.None : cancellationToken.Value;
+		// 输出被重定向（没有交互式终端）时没法用 Live 显示，退化成逐行输出。
+		if (!AnsiConsole.Profile.Capabilities.Interactive)
+		{
+			await RunWithoutLiveAsync(title, tasks, token);
+			return;
+		}
 		var live = AnsiConsole.Live(new Rows()).AutoClear(true);
 		var result = await live.StartAsync(ctx => new TaskRunContext(title, tasks, ctx, token).Run());
 		AnsiConsole.Write(result);
 		AnsiConsole.WriteLine();
+	}
+
+	/// <summary>
+	/// 在没有交互式终端时执行任务，只输出失败信息和最终统计。
+	/// </summary>
+	private static async Task RunWithoutLiveAsync(string title, List<Func<TaskContext, Task>> tasks, CancellationToken cancellationToken)
+	{
+		int successCount = 0;
+		int failureCount = 0;
+		var taskQueue = new ConcurrentQueue<Func<TaskContext, Task>>(tasks);
+		var consoleMutex = new object();
+		void MarkupLine(string markup)
+		{
+			lock (consoleMutex)
+			{
+				AnsiConsole.MarkupLine(markup);
+			}
+		}
+		int threadCount = Math.Clamp(tasks.Count, 1, Environment.ProcessorCount);
+		Task[] workers = new Task[threadCount];
+		for (int i = 0; i < threadCount; i++)
+		{
+			int index = i;
+			workers[i] = Task.Run(async () =>
+			{
+				var context = new TaskContext(index, (_, _) => { }, MarkupLine, cancellationToken);
+				while (taskQueue.TryDequeue(out Func<TaskContext, Task>? task))
+				{
+					try
+					{
+						await task(context);
+						Interlocked.Increment(ref successCount);
+					}
+					catch (Exception e) when (e is not OperationCanceledException)
+					{
+						Interlocked.Increment(ref failureCount);
+						MarkupLine($"[red]Error: [/]{context.StatusMarkup}");
+						lock (consoleMutex)
+						{
+							AnsiConsole.WriteException(e, ExceptionFormats.ShortenPaths);
+						}
+					}
+				}
+			});
+		}
+		await Task.WhenAll(workers);
+		string message = $"{title} [green]{successCount}[/]/{tasks.Count}";
+		if (failureCount > 0)
+		{
+			message += $" 失败 [red]{failureCount}[/]";
+		}
+		AnsiConsole.MarkupLine(message);
 	}
 
 	/// <summary>

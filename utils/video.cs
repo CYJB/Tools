@@ -17,6 +17,21 @@ class VideoUtils
 	];
 
 	/// <summary>
+	/// utils/ffmpeg 目录。
+	/// </summary>
+	public static readonly string FFmpegFolder = Path.Combine(FileUtils.GetScriptFolder(), "ffmpeg");
+
+	/// <summary>
+	/// utils/ffmpeg 下自带的 ffmpeg.exe。
+	/// </summary>
+	public static readonly string FFmpegPath = Path.Combine(FFmpegFolder, "ffmpeg.exe");
+
+	/// <summary>
+	/// utils/ffmpeg 下自带的 ffprobe.exe。
+	/// </summary>
+	public static readonly string FFprobePath = Path.Combine(FFmpegFolder, "ffprobe.exe");
+
+	/// <summary>
 	/// 是否已配置过 ffmpeg 路径。
 	/// </summary>
 	private static bool hasSetupFFmpeg = false;
@@ -31,6 +46,6 @@ class VideoUtils
 			return;
 		}
 		hasSetupFFmpeg = true;
-		FFmpeg.SetExecutablesPath(Path.Combine(FileUtils.GetScriptFolder(), "ffmpeg"), "ffmpeg.exe");
+		FFmpeg.SetExecutablesPath(FFmpegFolder, "ffmpeg.exe");
 	}
 }
