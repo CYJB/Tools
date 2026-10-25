@@ -39,3 +39,21 @@
 | `recognize-contents.cs` | 通过 ollama 大模型识别图片中的目录并重命名文件 | config-holder |
 | `calibre-backup.csx` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
 | `compress-media.csx` | 根据分辨率压缩图片和视频 | compress, console, task |
+
+## 会话内发布 exe 的坑（重要）
+
+当前工作区目录带 Windows「低完整性」标签（`Mandatory Label\Low Mandatory Level`，`(OI)(CI)` 向下继承），这是会话沙箱留下的。**在工作区目录里 `dotnet publish` 出来的 exe 会继承该标签**，Windows 会据此把进程按低完整性启动：读文件、以及操作工作区内同样带标签的文件都正常，但去改名/删除工作区之外的普通目录（例如下载目录）里的文件会失败，报 `Access to the path is denied`（ProcMon 里是 `CreateFile ... Desired Access: <含 Delete> ...` → `ACCESS DENIED`），即使那些文件的 ACL 完全正常。
+
+所以：
+
+- **助手交付在本会话里生成的 exe 时，必须提醒用户手工去掉标签**（管理员终端）：
+  ```powershell
+  icacls "<exe 路径>" /setintegritylevel Medium
+  ```
+- 或者把发布输出放到工作区之外，在普通目录里新建/复制的文件不会带这个标签：
+  ```powershell
+  dotnet publish recognize-contents.cs -o "$env:USERPROFILE\bin"
+  ```
+- 用户自己手工发布的 exe 没有这个问题。
+
+自查：`icacls <文件>` 里出现 `Mandatory Label\Low Mandatory Level` 就是中招；换目录后重新运行，或让程序打印进程令牌的完整性级别即可确认。

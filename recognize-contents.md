@@ -65,6 +65,14 @@ dotnet publish recognize-contents.cs
 
 默认输出到 `artifacts/recognize-contents/recognize-contents.exe`，**就一个文件**，约 2.8 MB。想换输出目录加 `-o <目录>`。
 
+> ⚠️ 如果在当前工作区目录里发布（尤其是由助手在会话内发布），exe 会继承该目录的 Windows「低完整性」标签，运行时只能读写同样带低完整性标签的文件——去改名/删除普通目录里的图片会报 `Access to the path is denied`。用管理员终端去掉标签即可：
+>
+> ```powershell
+> icacls "<exe 路径>" /setintegritylevel Medium
+> ```
+>
+> 或者把输出目录放到仓库外（如 `-o "$env:USERPROFILE\bin"`）。详见 [AGENTS.md](AGENTS.md)。
+
 其它变体：
 
 - 要免装运行时（自包含）：`dotnet publish recognize-contents.cs -p:SelfContained=true -p:EnableCompressionInSingleFile=true`，约 37 MB。单文件压缩只在自包含时可用，依赖框架时带上它会被 `NETSDK1176` 拒绝。
