@@ -184,11 +184,23 @@ class BaiduPanAuth
 		/// <summary>
 		/// 从指定 Access Token 结果复制。
 		/// </summary>
+		/// <remarks>
+		/// 调用方（<see cref="GetAccessTokenAsync"/> 等）必须在复制后调用 <c>configHolder.Save()</c>，
+		/// 把新的 AccessToken 和 RefreshToken 写回配置文件，否则下次运行仍然要重新刷新或重新授权。
+		/// </remarks>
 		public void CopyFrom(AccessTokenResult token)
 		{
 			AccessToken = token.AccessToken;
-			AccessTokenExpires = DateTimeOffset.Now.ToUnixTimeMilliseconds() + token.ExpiresIn * 1000;
-			RefreshToken = token.RefreshToken;
+			// 刷新时百度会返回新的 RefreshToken，需要记下来供下次使用；
+			// 万一响应里没有返回，则保留原来的，避免丢失后只能重新授权。
+			if (!string.IsNullOrEmpty(token.RefreshToken))
+			{
+				RefreshToken = token.RefreshToken;
+			}
+			if (token.ExpiresIn > 0)
+			{
+				AccessTokenExpires = DateTimeOffset.Now.ToUnixTimeMilliseconds() + token.ExpiresIn * 1000;
+			}
 		}
 	}
 

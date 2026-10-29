@@ -61,7 +61,20 @@
 
 所以：
 
-- **发布完必须手工去掉标签**（把标签从低改回中需要提升的权限，用管理员终端）：
+- **首选**：用工作区根目录的 `publish-exe.cmd`（内部转 `publish-exe.ps1`）发布，它默认输出到 `$env:USERPROFILE\bin`，发布后逐个用 `icacls` 检查 exe 的完整性级别，级别不对就打印需要手动执行的命令（脚本不自己提权）：
+  ```powershell
+  .\publish-exe.cmd                 # 发布所有 .cs 到 %USERPROFILE%\bin
+  .\publish-exe.cmd -SkipPublish    # 只检查已有 exe
+  .\publish-exe.cmd -Name calibre-backup -OutDir D:\tools
+  ```
+  本机对未签名脚本限制较严：直接 `.\publish-exe.ps1` 会报「未对文件进行数字签名」（`Get-ExecutionPolicy` 显示 RemoteSigned 也会被拒，传 `-ExecutionPolicy Unrestricted` 同样不行，**只有 `Bypass` 能跑**），所以用 `.cmd` 包一层；手动等价写法是 `powershell -NoProfile -ExecutionPolicy Bypass -File .\publish-exe.ps1`。
+  想把 exe 放回工作区直接运行：脚本**默认会把 exe 复制回当前目录**（覆盖同名文件），复制完重新检查完整性。规律是：覆盖已存在的同名文件会保留它原有的标签（Medium 还是 Medium，因为 `CopyFile` 是截断写入不是删除重建）；**当前目录原本没有同名 exe 时属于新建，会继承工作区的低标签变成 Low**，这时脚本会打印 `icacls "<路径>" /setintegritylevel Medium`（需管理员终端手动执行）。只发布到 `%USERPROFILE%\bin`、不复制回来时加 `-NoCopyBack`：
+  ```powershell
+  .\publish-exe.cmd                  # 发布到 %USERPROFILE%\bin 并复制回当前目录
+  .\publish-exe.cmd -NoCopyBack      # 只发布，不复制回来
+  .\publish-exe.cmd -SkipPublish     # 不重新编译，只复制/检查
+  ```
+- 或者**发布完手工去掉标签**（把标签从低改回中需要提升的权限，用管理员终端）：
   ```powershell
   icacls "<exe 路径>" /setintegritylevel Medium
   ```
@@ -69,6 +82,7 @@
   ```powershell
   dotnet publish pack-epub.cs -o "$env:USERPROFILE\bin"
   ```
+- 注意新文件的标签是 `min(发布进程的完整性, 输出目录的完整性)`：在受限/沙箱终端里发布，即使输出到普通目录，产物也是 Low。
 - 没有管理员权限时的临时绕法：用 `$env:DOTNET_BUNDLE_EXTRACT_BASE_DIR` 把单文件 exe 的解压目录指到可写位置，但那不解决写 epub 到普通目录的问题，标签最终还是得改。
 
 自查：`icacls <文件>` 里出现 `Mandatory Label\Low Mandatory Level` 就是中招（正常的 exe 是 `Medium Mandatory Level`）；`whoami /groups | findstr Mandatory` 可以看当前进程自己的完整性级别。
