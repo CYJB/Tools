@@ -610,15 +610,24 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		public async Task Upload(string folder, string name, bool history, Action<float>? progressCallback = null)
 		{
 			await EnsureFolder(folder);
-			var oldFile = await GetCloudFile(folder, name);
+			var files = await GetFolderFiles(folder);
+			var oldFile = files.Find(file => !file.IsDir && file.Name == name);
 			if (oldFile != null)
 			{
 				if (history)
 				{
-					// 将同名文件改名为历史备份。
+					// 将同名文件改名为历史备份。重名的目标会让网盘改名失败，所以要挑一个没被占用的名字。
 					DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(oldFile.ServerCreatetime);
-					string suffix = dateTimeOffset.ToString(" yyyy-MM-dd");
-					await cloud.Rename((GetFilePath(folder, name), name + suffix));
+					string? historyName = GetHistoryFileName(files, name, oldFile, dateTimeOffset);
+					if (historyName == null)
+					{
+						// 目录里已经有一份内容相同的历史记录，当前这份就不用再留了。
+						await cloud.Delete(GetFilePath(folder, name));
+					}
+					else
+					{
+						await cloud.Rename((GetFilePath(folder, name), historyName));
+					}
 				}
 				else
 				{
@@ -638,6 +647,56 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				throw new Exception(Markup.Escape(ex.Message));
 			}
 			cloudFolders.Remove(folder);
+		}
+
+		/// <summary>
+		/// 返回历史记录的文件名。
+		/// </summary>
+		/// <param name="files">目录中已有的文件。</param>
+		/// <param name="name">备份文件名。</param>
+		/// <param name="file">要改名为历史记录的文件。</param>
+		/// <param name="dateTime">这份备份的创建时间。</param>
+		/// <returns>历史记录文件名；目录里已经有内容相同的记录时返回 <c>null</c>。</returns>
+		/// <remarks>
+		/// <para>格式是「文件名 + 空格 + yyyy-MM-dd + 空格 + 内容哈希前 8 位」，日期便于辨认，哈希用于区分同一天的不同快照。</para>
+		/// <para>
+		/// 用哈希而不是时分秒，是因为它做内容寻址：同一份快照永远得到同一个名字，与修改时间无关
+		/// （迁移移动文件会顺手改掉创建时间），而且同一份内容不会重复保存。
+		/// </para>
+		/// <para>网盘的改名接口遇到重名的目标会失败（errno -8，带 ondup=overwrite 也不会覆盖），所以要先挑空名字。</para>
+		/// </remarks>
+		private static string? GetHistoryFileName(List<BaiduPanFileInfo> files, string name, BaiduPanFileInfo file, DateTimeOffset dateTime)
+		{
+			string date = dateTime.ToString(" yyyy-MM-dd");
+			string? hash = file.ServerHash;
+			string candidate;
+			if (string.IsNullOrEmpty(hash))
+			{
+				// 拿不到哈希（极少见）时退回只带日期。
+				candidate = name + date;
+			}
+			else
+			{
+				string shortHash = hash[..Math.Min(8, hash.Length)].ToLowerInvariant();
+				candidate = $"{name}{date} {shortHash}";
+			}
+			var existing = files.Find(item => item.Name == candidate);
+			if (existing == null)
+			{
+				return candidate;
+			}
+			// 同一天、同样内容的历史记录已经存在，不必再存一份。
+			if (!string.IsNullOrEmpty(hash) && string.Equals(existing.ServerHash, hash, StringComparison.OrdinalIgnoreCase))
+			{
+				return null;
+			}
+			// 哈希前缀撞车（或没有哈希）这种极少见的情况，才退化成带时分秒和序号的名字。
+			candidate = name + dateTime.ToString(" yyyy-MM-dd HH-mm-ss");
+			for (int i = 2; files.Exists(item => item.Name == candidate); i++)
+			{
+				candidate = $"{name} {dateTime:yyyy-MM-dd HH-mm-ss}-{i}";
+			}
+			return candidate;
 		}
 
 		/// <summary>
