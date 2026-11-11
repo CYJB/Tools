@@ -13,7 +13,7 @@ class VideoUtils
 	/// 视频的扩展名。
 	/// </summary>
 	public static readonly HashSet<string> Ext = [
-		".mp4", ".avi", ".mvk", ".mov",
+		".mp4", ".avi", ".mkv", ".mov",
 	];
 
 	/// <summary>

@@ -4,6 +4,20 @@
 
 打包漫画时，目录中的非图片文件（例如视频、说明文本）会保持原样，不会被压缩或添加到 epub 中。如果设置自动添加到 Calibre，它们会作为数据文件添加到相应书籍的数据目录内。
 
+## 添加到 Calibre 时的自定义元数据
+
+添加到 Calibre 时，会先添加 epub 拿到书籍 ID，紧接着用 `calibredb set_metadata` 写入下面几个自定义列，**之后**才添加 7z 备份和 data 目录里的其它文件——后两步可能因为超出 Calibre 的大小限制而失败，元数据必须先写进去：
+
+| 列名 | 类型 | 含义 | 不设置的情况 |
+|:----:|:----:|------|:------------:|
+| `#image_count` | 整数 | epub 中包含的图片数（含封面） | 没有图片，或只有封面 |
+| `#video_count` | 整数 | 添加到 data 目录的视频个数 | 没有视频 |
+| `#original_size` | 浮点数 | 本书的原始大小，包含所有原始文件（文本、图片、视频以及其它 data 资源），单位 KB（按 1000 计算） | 既没有图片（只有封面）也没有视频 |
+
+`#original_size` 统计的是压缩前的原始大小，并且只在 `#image_count` 或 `#video_count` 有值时才会设置。
+
+> ⚠️ 这三个列需要事先在 Calibre 里创建（首选项 → 界面外观 → 添加自定义列，列名分别填 `image_count`、`video_count`、`original_size`，类型如上表）。列不存在时 `set_metadata` 会失败，此时程序不打印警告、直接继续添加 7z 和 data 文件。
+
 ## 用法
 
 `dotnet run pack-epub.cs -- [path] [OPTIONS]`

@@ -198,6 +198,11 @@ if (-not $NoCopyBack) {
 			$item
 			continue
 		}
+		# 发布失败时不要复制：否则会把输出目录里的旧产物覆盖回当前目录。
+		if ($item.PublishErr) {
+			$item
+			continue
+		}
 		$dest = Join-Path $sourceDir (Split-Path -Leaf $item.Exe)
 		# 输出目录就是当前目录时不需要复制。
 		if ([System.IO.Path]::GetFullPath($dest) -eq [System.IO.Path]::GetFullPath($item.Exe)) {
@@ -235,7 +240,8 @@ $props = @(
 	'Script',
 	@{ Name = '完整性'; Expression = { $_.Level } },
 	@{ Name = '状态'; Expression = {
-		if ($_.CopyErr) { '复制失败' }
+		if ($_.PublishErr) { '发布失败' }
+		elseif ($_.CopyErr) { '复制失败' }
 		elseif (-not $_.Exists) { '缺少 exe' }
 		elseif ($_.Level -eq 'Low') { '需要修正' }
 		elseif ($_.Level -eq 'Unknown') { '无法判断' }
@@ -247,7 +253,7 @@ $props = @(
 )
 if (-not $NoCopyBack) {
 	$props += @{ Name = '覆盖已有'; Expression = {
-		if (-not $_.Exists) { '-' }
+		if ($null -eq $_.Existed) { '-' }
 		elseif ($_.Existed) { '是' }
 		else { '否（新建）' }
 	} }

@@ -616,6 +616,8 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 			{
 				if (history)
 				{
+					// 旧格式的历史记录（只有日期、没有哈希）先补上哈希，保证目录里的命名格式一致。
+					await NormalizeHistoryNames(folder, files, name);
 					// 将同名文件改名为历史备份。重名的目标会让网盘改名失败，所以要挑一个没被占用的名字。
 					DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(oldFile.ServerCreatetime);
 					string? historyName = GetHistoryFileName(files, name, oldFile, dateTimeOffset);
@@ -650,6 +652,75 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 
 		/// <summary>
+		/// 把旧格式（只有日期、没有哈希）的历史记录改名成新格式。
+		/// </summary>
+		/// <param name="folder">目录名，空字符串表示备份的根目录。</param>
+		/// <param name="files">目录中已有的文件，改完后会同步更新。</param>
+		/// <param name="name">备份文件名。</param>
+		/// <remarks>
+		/// 只在即将写入新的历史记录时顺带整理，所以没改动过的书籍会等到下次变化时才补齐。
+		/// </remarks>
+		private async Task NormalizeHistoryNames(string folder, List<BaiduPanFileInfo> files, string name)
+		{
+			foreach (var (oldName, newName) in GetHistoryRenames(files, name))
+			{
+				var file = files.Find(item => item.Name == oldName);
+				if (file == null)
+				{
+					continue;
+				}
+				await cloud.Rename((GetFilePath(folder, oldName), newName));
+				files.Remove(file);
+				files.Add(MoveFileInfo(file, GetFilePath(folder, newName), newName));
+			}
+		}
+
+		/// <summary>
+		/// 返回旧格式历史记录（只有日期、没有哈希）需要改成的新名字。
+		/// </summary>
+		/// <param name="files">目录中已有的文件。</param>
+		/// <param name="name">备份文件名。</param>
+		private static List<(string OldName, string NewName)> GetHistoryRenames(List<BaiduPanFileInfo> files, string name)
+		{
+			string prefix = name + " ";
+			List<(string OldName, string NewName)> renames = [];
+			foreach (var file in files)
+			{
+				if (file.IsDir || !file.Name.StartsWith(prefix, StringComparison.Ordinal))
+				{
+					continue;
+				}
+				// 只有「文件名 + 空格 + yyyy-MM-dd」这 10 位日期才是旧格式。
+				string rest = file.Name[prefix.Length..];
+				if (rest.Length != 10 || !HistoryDateRegex.IsMatch(rest))
+				{
+					continue;
+				}
+				string? shortHash = GetShortHash(file);
+				if (shortHash == null)
+				{
+					continue;
+				}
+				string newName = $"{file.Name} {shortHash}";
+				if (files.Exists(item => item.Name == newName))
+				{
+					continue;
+				}
+				renames.Add((file.Name, newName));
+			}
+			return renames;
+		}
+
+		/// <summary>
+		/// 返回内容哈希的前 8 位，用于历史记录的文件名。
+		/// </summary>
+		private static string? GetShortHash(BaiduPanFileInfo file)
+		{
+			string? hash = file.ServerHash;
+			return string.IsNullOrEmpty(hash) ? null : hash[..Math.Min(8, hash.Length)].ToLowerInvariant();
+		}
+
+		/// <summary>
 		/// 返回历史记录的文件名。
 		/// </summary>
 		/// <param name="files">目录中已有的文件。</param>
@@ -669,17 +740,8 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		{
 			string date = dateTime.ToString(" yyyy-MM-dd");
 			string? hash = file.ServerHash;
-			string candidate;
-			if (string.IsNullOrEmpty(hash))
-			{
-				// 拿不到哈希（极少见）时退回只带日期。
-				candidate = name + date;
-			}
-			else
-			{
-				string shortHash = hash[..Math.Min(8, hash.Length)].ToLowerInvariant();
-				candidate = $"{name}{date} {shortHash}";
-			}
+			string? shortHash = GetShortHash(file);
+			string candidate = shortHash == null ? name + date : $"{name}{date} {shortHash}";
 			var existing = files.Find(item => item.Name == candidate);
 			if (existing == null)
 			{
@@ -875,6 +937,8 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 						&& TryGetOldFileId(file.Name, out string id)
 						&& TryGetNewFileName(file.Name, id, out string newName))
 					{
+						// 历史记录统一带上内容哈希，和新建的历史记录格式保持一致。
+						newName = AddHistoryHash(newName, file);
 						if (!legacyFiles.TryGetValue(id, out var moves))
 						{
 							moves = [];
@@ -885,6 +949,25 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				}
 			}
 			return legacyFiles;
+		}
+
+		/// <summary>
+		/// 给历史记录的文件名追加内容哈希前 8 位。
+		/// </summary>
+		/// <param name="name">转换后的文件名。</param>
+		/// <param name="file">对应的旧文件。</param>
+		/// <remarks>
+		/// 只有「文件名 + 空格 + yyyy-MM-dd」这种历史记录名才需要追加，普通的分组文件保持不变。
+		/// </remarks>
+		private static string AddHistoryHash(string name, BaiduPanFileInfo file)
+		{
+			int index = name.LastIndexOf(' ');
+			if (index <= 0 || !HistoryDateRegex.IsMatch(name[(index + 1)..]))
+			{
+				return name;
+			}
+			string? shortHash = GetShortHash(file);
+			return shortHash == null ? name : $"{name} {shortHash}";
 		}
 
 		/// <summary>

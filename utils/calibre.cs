@@ -529,6 +529,56 @@ class Calibre
 	}
 
 	/// <summary>
+	/// 设置指定书籍的元数据字段。
+	/// </summary>
+	/// <param name="id">书籍的 ID。</param>
+	/// <param name="fields">要设置的字段（字段名和值），自定义列需要以 # 开头。</param>
+	public async Task SetMetadata(string id, IReadOnlyCollection<(string Name, string Value)> fields)
+	{
+		if (fields.Count == 0)
+		{
+			return;
+		}
+		using var process = new Process();
+		List<string> args = ["set_metadata", .. libraryArgs];
+		foreach (var (name, value) in fields)
+		{
+			args.Add("-f");
+			args.Add($"{name}:{value}");
+		}
+		args.Add(id);
+		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
+		{
+			WorkingDirectory = binDir,
+			UseShellExecute = false,
+			RedirectStandardOutput = true,
+			RedirectStandardError = true,
+		};
+
+		var errorBuilder = new StringBuilder();
+		process.ErrorDataReceived += (sender, e) =>
+		{
+			if (!string.IsNullOrEmpty(e.Data))
+			{
+				errorBuilder.Append(e.Data);
+			}
+		};
+		process.Start();
+
+		process.BeginOutputReadLine();
+		process.BeginErrorReadLine();
+		await process.WaitForExitAsync();
+		if (process.ExitCode != 0)
+		{
+			throw new Exception($"设置元数据失败: {process.ExitCode}, {errorBuilder}");
+		}
+		else if (errorBuilder.Length > 0)
+		{
+			throw new Exception($"设置元数据失败: {errorBuilder}");
+		}
+	}
+
+	/// <summary>
 	/// 返回 Calibre 的可执行文件目录。
 	/// </summary>
 	private static string GetCalibreBinDir()

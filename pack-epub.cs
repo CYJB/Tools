@@ -28,6 +28,7 @@
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Spectre.Console;
@@ -127,7 +128,7 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		DetectTasks(targetPath, tasks);
 		if (tasks.Count == 0)
 		{
-			AnsiConsole.MarkupLine($"[red]无效的路径 {targetPath}[/]");
+			AnsiConsole.MarkupLine($"[red]无效的路径 {targetPath.EscapeMarkup()}[/]");
 		}
 		else
 		{
@@ -267,17 +268,23 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 	/// </summary>
 	private async Task PackComic(string path, EPubExporter exporter, bool compress, Calibre? calibre)
 	{
-		List<string> generatedFiles = new() { exporter.FilePath };
 		string[] allFiles = GetFiles(path);
+		// 记录压缩前的原始大小，用于写入 #original_size（单位 KB，按 1000 计算）。
+		long originalSize = 0;
+		foreach (var file in allFiles)
+		{
+			originalSize += new FileInfo(file).Length;
+		}
 		// 分离其它文件，不添加到 epub 或 cb7 中。
 		string[] files = allFiles.Where(f => ImageUtils.Ext.Contains(Path.GetExtension(f).ToLower())).ToArray();
 		string[] otherFiles = allFiles.Where(f => !ImageUtils.Ext.Contains(Path.GetExtension(f).ToLower())).ToArray();
+		string? sevenZPath = null;
 		if (compress)
 		{
-			var sevenZPath = Path.ChangeExtension(exporter.FilePath, ".cb7");
-			if (await CompressImages(path, files, sevenZPath))
+			var cb7Path = Path.ChangeExtension(exporter.FilePath, ".cb7");
+			if (await CompressImages(path, files, cb7Path))
 			{
-				generatedFiles.Add(sevenZPath);
+				sevenZPath = cb7Path;
 				// 压缩完重新提取文件（仍仅限图片）。
 				files = GetFiles(path).Where(f => ImageUtils.Ext.Contains(Path.GetExtension(f).ToLower())).ToArray();
 			}
@@ -359,7 +366,10 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 		});
 		if (calibre != null)
 		{
-			var id = await calibre.Add(generatedFiles, new CalibreBookOptions()
+			// 先只添加 epub：拿到书籍 ID 后立刻写入自定义元数据，
+			// 因为之后添加的 7z 和 data 文件可能因超出 calibre 的限制而失败，
+			// 一旦失败，这些元数据就很难再人工补齐了。
+			var id = await calibre.Add([exporter.FilePath], new CalibreBookOptions()
 			{
 				Title = exporter.Title,
 				Authors = exporter.Author,
@@ -371,13 +381,52 @@ sealed class PackCommand : AsyncCommand<PackCommand.Settings>
 			}
 			else
 			{
-				AnsiConsole.MarkupLine($"已添加 [green]{id}[/]");
+				AnsiConsole.MarkupLine($"已添加 [green]{id.EscapeMarkup()}[/]");
+				await SetCustomMetadata(calibre, id, files, otherFiles, originalSize);
+				// 原图备份作为 7z 格式添加。
+				if (sevenZPath != null)
+				{
+					await calibre.AddFormat(id, Path.GetFullPath(sevenZPath), false);
+				}
 				foreach (var file in otherFiles)
 				{
 					await calibre.AddFormat(id, Path.GetFullPath(file), true);
-					AnsiConsole.MarkupLine($"已添加数据 [green]{Path.GetFileName(file)}[/]");
+					AnsiConsole.MarkupLine($"已添加数据 [green]{Path.GetFileName(file).EscapeMarkup()}[/]");
 				}
 			}
+		}
+	}
+
+	/// <summary>
+	/// 设置书籍的自定义元数据。
+	/// </summary>
+	private static async Task SetCustomMetadata(Calibre calibre, string id, string[] files, string[] otherFiles, long originalSize)
+	{
+		List<(string Name, string Value)> fields = [];
+		// 图片数（含封面），未包含图片或只有封面时不设置。
+		bool hasImage = files.Any(file => !FileUtils.IsCoverFile(file));
+		if (hasImage)
+		{
+			fields.Add(("#image_count", files.Length.ToString(CultureInfo.InvariantCulture)));
+		}
+		// 视频数，即会添加到书籍 data 目录的视频个数。
+		int videoCount = otherFiles.Count(file => VideoUtils.Ext.Contains(Path.GetExtension(file).ToLower()));
+		if (videoCount > 0)
+		{
+			fields.Add(("#video_count", videoCount.ToString(CultureInfo.InvariantCulture)));
+		}
+		// 原始大小（单位 KB，按 1000 计算），只对包含图片或视频的书籍设置。
+		if (hasImage || videoCount > 0)
+		{
+			fields.Add(("#original_size", Math.Round(originalSize / 1000.0, 3).ToString(CultureInfo.InvariantCulture)));
+		}
+		try
+		{
+			await calibre.SetMetadata(id, fields);
+		}
+		catch (Exception)
+		{
+			// 设置失败（例如书库中还没有创建这些自定义列）时直接继续，不影响后续添加 7z 和 data 文件。
 		}
 	}
 
