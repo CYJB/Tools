@@ -6,6 +6,7 @@
  * 音频转换依赖 utils/ffmpeg 下自带的 ffmpeg，图片转换依赖 Magick.NET。
  */
 #:include utils/file.cs
+#:include utils/process.cs
 #:include utils/task.cs
 #:include utils/video.cs
 #:package Magick.NET.Core
@@ -18,13 +19,12 @@
 #:property PublishAot=false
 #:property PublishSingleFile=true
 #:property SelfContained=false
-#:property RuntimeIdentifier=win-x64
+#:property RuntimeIdentifier=$(NETCoreSdkRuntimeIdentifier)
 #:property IncludeNativeLibrariesForSelfExtract=true
 #:property DebugType=embedded
 #nullable enable
 
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using ImageMagick;
 using Spectre.Console;
@@ -246,7 +246,6 @@ sealed class ConvertCommand : AsyncCommand<ConvertCommand.Settings>
 		string desc = FileUtils.GetRelativePath(rootPath, file).EscapeMarkup();
 		ctx.Status($"转换 {desc} ...");
 		string target = Path.ChangeExtension(file, ".mp3");
-		using Process process = new();
 		List<string> args = [
 			"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
 			"-i", file,
@@ -255,24 +254,8 @@ sealed class ConvertCommand : AsyncCommand<ConvertCommand.Settings>
 			"-id3v2_version", "3",
 			target,
 		];
-		process.StartInfo = new ProcessStartInfo(VideoUtils.FFmpegPath, args)
-		{
-			UseShellExecute = false,
-			CreateNoWindow = true,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-		};
-		process.Start();
-		// ffmpeg 会把信息都写到错误流，必须读掉，避免管道写满卡死。
-		Task outputTask = process.StandardOutput.ReadToEndAsync();
-		Task<string> errorTask = process.StandardError.ReadToEndAsync();
-		await process.WaitForExitAsync(ctx.CancellationToken);
-		await outputTask;
-		string error = (await errorTask).Trim();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception(error.Length > 0 ? error : $"ffmpeg 退出码 {process.ExitCode}");
-		}
+		// ProcessRun 是事件式读取两个流，不会出现「管道写满卡死」的问题；取消时它还会杀掉 ffmpeg 进程树。
+		await ProcessRun.RunAsync(VideoUtils.FFmpegPath, args, null, ctx.CancellationToken);
 	}
 
 	/// <summary>

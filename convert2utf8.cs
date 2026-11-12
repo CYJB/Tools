@@ -14,7 +14,7 @@
 #:property PublishAot=false
 #:property PublishSingleFile=true
 #:property SelfContained=false
-#:property RuntimeIdentifier=win-x64
+#:property RuntimeIdentifier=$(NETCoreSdkRuntimeIdentifier)
 #:property DebugType=embedded
 #nullable enable
 

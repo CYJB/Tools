@@ -98,7 +98,7 @@ dotnet publish pack-epub.cs
 #:property PublishAot=false                            // 反射式 JSON 序列化需要；AOT 会把它关掉
 #:property PublishSingleFile=true                      // 打成单文件
 #:property SelfContained=false                         // 依赖本机安装的 .NET 10 运行时
-#:property RuntimeIdentifier=win-x64
+#:property RuntimeIdentifier=$(NETCoreSdkRuntimeIdentifier)   // 取当前 SDK 自带的 RID，Windows 上就是 win-x64
 #:property IncludeNativeLibrariesForSelfExtract=true   // Magick.NET 的原生库也打进单文件，运行时自解压
 #:property DebugType=embedded                          // pdb 内嵌，不产生额外的 .pdb
 ```

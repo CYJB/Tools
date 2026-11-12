@@ -16,12 +16,33 @@ class ConsoleApp
 		where TDefaultCommand : class, ICommand
 	{
 		var app = new CommandApp<TDefaultCommand>();
+		return app.RunAsync(args, CreateCancellationSource().Token);
+	}
+
+	/// <summary>
+	/// 运行带有多个子命令的应用，并把 Ctrl+C 转换成取消。
+	/// </summary>
+	public static Task<int> RunAsyncWithCancellation(Action<IConfigurator> configure, string[] args)
+	{
+		var app = new CommandApp();
+		app.Configure(configure);
+		return app.RunAsync(args, CreateCancellationSource().Token);
+	}
+
+	/// <summary>
+	/// 创建把 Ctrl+C 转换成取消的通知源。第二次 Ctrl+C 不再拦截，让进程能被强制结束。
+	/// </summary>
+	private static CancellationTokenSource CreateCancellationSource()
+	{
 		var cancellationTokenSource = new CancellationTokenSource();
 		Console.CancelKeyPress += (_, e) =>
 		{
-			e.Cancel = true;
-			cancellationTokenSource.Cancel();
+			if (!cancellationTokenSource.IsCancellationRequested)
+			{
+				e.Cancel = true;
+				cancellationTokenSource.Cancel();
+			}
 		};
-		return app.RunAsync(args, cancellationTokenSource.Token);
+		return cancellationTokenSource;
 	}
 }

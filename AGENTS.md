@@ -16,6 +16,7 @@
 
 ```
 .
+├── audiobook.cs / .md          # 有声书合并成带章节的 m4b，也可编辑元数据和章节
 ├── calibre-backup.cs / .md     # calibre 书库备份（→百度网盘）
 ├── compress-media.cs / .md     # 图片/视频压缩
 ├── convert-media.cs            # 音频转 mp3、图片转 png/jpg
@@ -28,6 +29,7 @@
 ├── utils/                      # 共享工具库 → utils/CONTEXT.md
 ├── web/                        # Web 工具 → web/CONTEXT.md
 ├── project/                    # .csproj（仅用于 IDE 智能提示）
+├── tests/                      # 测试（目前只有 audiobook）→ tests/audiobook/CONTEXT.md
 ├── images/                     # 文档图片
 ├── Tools.sln                   # VS 解决方案
 └── omnisharp.json              # OmniSharp 配置
@@ -47,10 +49,30 @@
 | `pg.cs` | 按「主密码 + 站点」生成固定密码，站点配置在 `pg.config.json` | config-holder |
 | `calibre-backup.cs` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
 | `compress-media.cs` | 根据分辨率压缩图片和视频 | compress, console, task |
+| `audiobook.cs` | 把目录下的音频合并成带章节的 m4b（`merge`），也可以查看（`info`）、导出（`export`）和修改（`apply`）元数据与章节 | console, file, process, task, video |
 
 入口只需要 `#:include` 直接依赖的模块，间接依赖由各模块自己 `#:include`（因此同一个文件可能被多次引入，编译时的 CS2002 警告属正常现象）。详见 [utils/CONTEXT.md](utils/CONTEXT.md)。
 
+`#:include` 需要 **.NET SDK 10.0.300 或更高版本**。该指令本身从 10.0.300 起已转正，但被引用的模块自己开头也写着 `#!` / `#:package`，这类「传递指令」仍是实验特性，要靠 `ExperimentalFileBasedProgramEnableTransitiveDirectives` 打开——这里已经配在 `Directory.Packages.props` 里了，SDK 10.0.302 实测不打开会报「这是一项实验性功能」。SDK 太旧时会报 `错误: 无法识别的指令 'include'`。
+
+各入口的 `#:property RuntimeIdentifier=$(NETCoreSdkRuntimeIdentifier)` 取当前 SDK 自带的 RID（win-x64 的 SDK 就是 `win-x64`，osx-arm64 的就是 `osx-arm64`），所以 Windows 上的发布产物与写死 `win-x64` 时完全一致，而在 mac 上可以直接 `dotnet run <脚本>.cs -- [参数]` 跑起来做开发调试，不用再加 `-p:RuntimeIdentifier=`。注意用了 `Magick.NET-Q8-x64` 的工具（`compress-media`、`convert-media`、`pack-epub`）在非 Windows 上只能编译、不能真正处理图片，因为那个包只带 win-x64 的原生库。
+
 `project/` 下的 `.csproj` 只用于 IDE 智能提示，不参与 `dotnet run`：用 `<Features>FileBasedProgram</Features>` 放开 `#!` / `#:` 指令，包版本交给 `Directory.Packages.props` 集中管理。
+
+## 测试
+
+目前只有 `audiobook.cs` 有测试，在 `tests/audiobook/`，用 xUnit：
+
+```powershell
+dotnet test tests/audiobook/Audiobook.Tests.csproj
+```
+
+它是**端到端**测试：夹具用 `dotnet build audiobook.cs -o <临时目录>` 构建出真实的可执行文件再调用，而不是把源码编进测试程序集（`audiobook.cs` 有顶层语句，一个程序集里只能有一份）。ffmpeg 优先用 `utils/ffmpeg/` 下自带的，找不到时回退到 PATH，所以在 Windows 和 macOS 上都能跑。详见 [tests/audiobook/CONTEXT.md](tests/audiobook/CONTEXT.md)。
+
+给这个仓库写测试时有两个坑：
+
+- **断言消息内容要先折叠空白**。Spectre 会按控制台宽度折行，输出被重定向时同样会折，于是「不是 m4b 容器」这种短语可能被拆到两行，直接 `Assert.Contains` 就匹配不上。用 `Text.Flat()` 或 `ProcessResult.FlatOutput`。反过来，`info --json` 那种机器可读的输出绝不能走 `AnsiConsole.WriteLine`（它还会把 JSON 里的 `[ ]` 当 markup 解析），必须走原始 stdout。
+- **测试不能并行**。它们共享一个工作区目录，合并产物就放在素材目录旁边。`TestEnv.cs` 顶部有 `[assembly: CollectionBehavior(DisableTestParallelization = true)]`。
 
 ## 在工作区发布 exe 的坑（重要）
 

@@ -18,7 +18,7 @@ class FileUtils
 	public static bool IsCoverFile(string path)
 	{
 		string fileName = Path.GetFileNameWithoutExtension(path);
-		if (fileName.StartsWith("cover"))
+		if (fileName.StartsWith("cover", StringComparison.OrdinalIgnoreCase))
 		{
 			return true;
 		}

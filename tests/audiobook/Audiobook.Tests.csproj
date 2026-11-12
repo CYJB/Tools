@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<TargetFramework>net10.0</TargetFramework>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<IsPackable>false</IsPackable>
+	<!-- 测试要跑 audiobook.cs 构建出来的 exe，而它的 RuntimeIdentifier 由 SDK 决定，
+	     所以这里不指定 RID，让测试在任何平台上都能构建和运行。 -->
+	<NoWarn>$(NoWarn);CS2002</NoWarn>
+  </PropertyGroup>
+
+  <!-- 包版本由 ../../Directory.Packages.props 集中管理。 -->
+  <ItemGroup>
+	<PackageReference Include="Microsoft.NET.Test.Sdk" />
+	<PackageReference Include="xunit" />
+	<PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

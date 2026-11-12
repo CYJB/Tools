@@ -13,7 +13,7 @@
 #:property PublishAot=false
 #:property PublishSingleFile=true
 #:property SelfContained=false
-#:property RuntimeIdentifier=win-x64
+#:property RuntimeIdentifier=$(NETCoreSdkRuntimeIdentifier)
 #:property IncludeNativeLibrariesForSelfExtract=true
 #:property DebugType=embedded
 #nullable enable

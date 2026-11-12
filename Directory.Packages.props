@@ -1,10 +1,10 @@
 <Project>
-  <!--
-    基于文件的应用（.cs）：`#:include` 允许被引用文件里再写 `#:include` / `#:package`，
-    这些指令的实际作用是实验性的，需要显式打开。
-  -->
   <PropertyGroup>
-	<ExperimentalFileBasedProgramEnableIncludeDirective>true</ExperimentalFileBasedProgramEnableIncludeDirective>
+	<!--
+	  基于文件的应用（.cs）：`#:include` 在 SDK 10.0.300 起已转正，但被引用的模块自己开头
+	  也写着 `#!` / `#:package`，这类「传递指令」仍是实验特性，要显式打开（SDK 10.0.302 实测
+	  不打开会报「这是一项实验性功能，将 MSBuild 属性 ...TransitiveDirectives 设置为 true」）。
+	-->
 	<ExperimentalFileBasedProgramEnableTransitiveDirectives>true</ExperimentalFileBasedProgramEnableTransitiveDirectives>
 	<!-- .cs 里的 `#:package` 不写版本，统一在这里管理。 -->
 	<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
@@ -17,6 +17,7 @@
 	<PackageVersion Include="Cyjb.Markdown" Version="1.0.3" />
 	<PackageVersion Include="Magick.NET.Core" Version="14.11.0" />
 	<PackageVersion Include="Magick.NET-Q8-x64" Version="14.11.0" />
+	<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
 	<PackageVersion Include="MimeMapping" Version="4.0.0" />
 	<PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
 	<PackageVersion Include="OllamaSharp" Version="5.4.25" />
@@ -25,5 +26,7 @@
 	<PackageVersion Include="System.Text.Encoding.CodePages" Version="10.0.5" />
 	<PackageVersion Include="UTF.Unknown" Version="2.5.1" />
 	<PackageVersion Include="Xabe.FFmpeg" Version="5.2.6" />
+	<PackageVersion Include="xunit" Version="2.9.3" />
+	<PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 </Project>

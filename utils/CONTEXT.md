@@ -2,7 +2,7 @@
 
 各命令行工具都是 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)，通过 `#:include` 引用此目录下的共享模块。
 
-每个 `.cs` 文件都是独立的编译单元，会 `#:include` 自己依赖的模块，所以入口只需要引用直接依赖的模块。成员都放在静态类里（如 `SevenZ`、`Compress`、`FileUtils`、`ImageUtils`、`TaskRun`、`VideoUtils`、`CodePages`、`BaiduPan`）。
+每个 `.cs` 文件都是独立的编译单元，会 `#:include` 自己依赖的模块，所以入口只需要引用直接依赖的模块。成员都放在静态类里（如 `SevenZ`、`Compress`、`FileUtils`、`ImageUtils`、`TaskRun`、`ProcessRun`、`VideoUtils`、`ConsoleApp`、`CodePages`、`BaiduPan`）。
 
 ## 模块列表
 
@@ -13,11 +13,12 @@
 | `7z` | 7z 命令行封装（`SevenZ.Compress`，加密压缩/分卷） |
 | `calibre` | Calibre 数据库和内容服务器交互 |
 | `baidu-pan` | 百度网盘接入（`BaiduPan`，具体实现在子目录） |
-| `video` / `ffmpeg` | [Xabe.FFmpeg](https://github.com/tomaszzmuda/Xabe.FFmpeg) 封装、视频扩展名、ffmpeg/ffprobe 路径（`VideoUtils.FFmpegPath`） |
+| `video` / `ffmpeg` | [Xabe.FFmpeg](https://github.com/tomaszzmuda/Xabe.FFmpeg) 封装、视频扩展名、ffmpeg/ffprobe 路径（`VideoUtils.FFmpegPath`，按平台选择 `ffmpeg.exe` 或 `ffmpeg`） |
 | `image` | ImageMagick 封装、图片扩展名与 MagickFormat 映射（`ImageUtils`） |
 | `task` | 多线程任务执行与取消辅助（`TaskRun.RunAsync`；没有交互式终端时自动退化成逐行输出） |
+| `process` | 外部进程执行（`ProcessRun.RunAsync`），事件式读取输出以支持逐行解析进度，非 0 退出码抛异常，取消时杀掉进程树；可选工作目录和输出编码（7z 走 GBK）。`audiobook`、`convert-media`、`7z`、`calibre` 都走它 |
 | `file` | 文件操作工具（封面判断、安全删除、脚本目录、相对路径，`FileUtils`） |
-| `console` | 控制台辅助（`ConsoleApp.RunAsyncWithCancellation`，把 Ctrl+C 转换成取消） |
+| `console` | 控制台辅助（`ConsoleApp.RunAsyncWithCancellation`，把 Ctrl+C 转换成取消；有单一默认命令和多个子命令两个重载） |
 | `http` | HTTP 请求辅助（`HttpUtils.BuildUriQuery` / `GetJsonAsync` / `PostJsonAsync`） |
 | `md5` | MD5 计算（`Md5Utils`） |
 | `string` | 字符串辅助（`StringUtils.RandomString`） |
@@ -51,7 +52,7 @@
 
 ### `ffmpeg/` — ffmpeg 二进制及参考
 
-包含 `ffmpeg.exe`、`ffprobe.exe`（Windows 二进制）和 `ffmpeg.md`（常用命令速查）。
+包含 `ffmpeg.exe`、`ffprobe.exe`（Windows 二进制）、`ffmpeg`、`ffprobe`（macOS arm64 二进制，供本机开发测试）和 `ffmpeg.md`（常用命令速查）。`VideoUtils` 按平台选择带不带 `.exe` 后缀的那一组。
 
 ### `json/` — JSON 辅助
 

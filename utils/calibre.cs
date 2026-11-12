@@ -1,9 +1,8 @@
 #!/usr/bin/env -S dotnet --
 #:include config-holder.cs
+#:include process.cs
 #nullable enable
 
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -323,7 +322,6 @@ class Calibre
 	/// </summary>
 	public async Task<CalibreBookInfo[]> List(ICollection<string>? fields = null, string? search = null)
 	{
-		using var process = new Process();
 		List<string> args = new() { "list", "--for-machine" };
 		if (fields != null && fields.Count > 0)
 		{
@@ -336,44 +334,8 @@ class Calibre
 			args.Add(search);
 		}
 		args.AddRange(libraryArgs);
-		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
-		{
-			WorkingDirectory = binDir,
-			UseShellExecute = false,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-		};
-
-		var resultBuilder = new StringBuilder();
-		var errorBuilder = new StringBuilder();
-		process.OutputDataReceived += (sender, e) =>
-		{
-			if (!string.IsNullOrEmpty(e.Data))
-			{
-				resultBuilder.Append(e.Data);
-			}
-		};
-		process.ErrorDataReceived += (sender, e) =>
-		{
-			if (!string.IsNullOrEmpty(e.Data))
-			{
-				errorBuilder.Append(e.Data);
-			}
-		};
-		process.Start();
-
-		process.BeginOutputReadLine();
-		process.BeginErrorReadLine();
-		await process.WaitForExitAsync();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception($"读取失败: {process.ExitCode}, {errorBuilder}");
-		}
-		else if (errorBuilder.Length > 0)
-		{
-			throw new Exception($"读取失败: {errorBuilder}");
-		}
-		return JsonSerializer.Deserialize<CalibreBookInfo[]>(resultBuilder.ToString())!;
+		ProcessResult result = await RunCalibreDbAsync("读取", args);
+		return JsonSerializer.Deserialize<CalibreBookInfo[]>(result.StdOut)!;
 	}
 
 	/// <summary>
@@ -381,7 +343,6 @@ class Calibre
 	/// </summary>
 	public async Task<string> Add(ICollection<string> files, CalibreBookOptions? options = null)
 	{
-		using var process = new Process();
 		List<string> args = new() { "add" };
 		if (options != null)
 		{
@@ -438,48 +399,15 @@ class Calibre
 		}
 		args.AddRange(libraryArgs);
 		args.AddRange(files);
-		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
-		{
-			WorkingDirectory = binDir,
-			UseShellExecute = false,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-		};
-
 		string? id = null;
-		var errorBuilder = new StringBuilder();
-		process.OutputDataReceived += (sender, e) =>
+		await RunCalibreDbAsync("添加", args, line =>
 		{
-			if (!string.IsNullOrEmpty(e.Data))
+			var match = CalibreAddResultRegex.Match(line.Trim());
+			if (match.Success)
 			{
-				var match = CalibreAddResultRegex.Match(e.Data.Trim());
-				if (match.Success)
-				{
-					id = match.Groups[1].Value;
-				}
+				id = match.Groups[1].Value;
 			}
-		};
-		process.ErrorDataReceived += (sender, e) =>
-		{
-			if (!string.IsNullOrEmpty(e.Data))
-			{
-				Console.WriteLine("> error {0}", e.Data);
-				errorBuilder.Append(e.Data);
-			}
-		};
-		process.Start();
-
-		process.BeginOutputReadLine();
-		process.BeginErrorReadLine();
-		await process.WaitForExitAsync();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception($"添加失败: {process.ExitCode}, {errorBuilder}");
-		}
-		else if (errorBuilder.Length > 0)
-		{
-			throw new Exception($"添加失败: {errorBuilder}");
-		}
+		});
 		return id ?? "";
 	}
 
@@ -488,7 +416,6 @@ class Calibre
 	/// </summary>
 	public async Task AddFormat(string id, string file, bool isExtraData = false)
 	{
-		using var process = new Process();
 		List<string> args = new() { "add_format" };
 		args.AddRange(libraryArgs);
 		args.Add(id);
@@ -497,35 +424,7 @@ class Calibre
 		{
 			args.Add("--as-extra-data-file");
 		}
-		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
-		{
-			WorkingDirectory = binDir,
-			UseShellExecute = false,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-		};
-
-		var errorBuilder = new StringBuilder();
-		process.ErrorDataReceived += (sender, e) =>
-		{
-			if (!string.IsNullOrEmpty(e.Data))
-			{
-				errorBuilder.Append(e.Data);
-			}
-		};
-		process.Start();
-
-		process.BeginOutputReadLine();
-		process.BeginErrorReadLine();
-		await process.WaitForExitAsync();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception($"添加格式失败: {process.ExitCode}, {errorBuilder}");
-		}
-		else if (errorBuilder.Length > 0)
-		{
-			throw new Exception($"添加格式失败: {errorBuilder}");
-		}
+		await RunCalibreDbAsync("添加格式", args);
 	}
 
 	/// <summary>
@@ -539,7 +438,6 @@ class Calibre
 		{
 			return;
 		}
-		using var process = new Process();
 		List<string> args = ["set_metadata", .. libraryArgs];
 		foreach (var (name, value) in fields)
 		{
@@ -547,35 +445,33 @@ class Calibre
 			args.Add($"{name}:{value}");
 		}
 		args.Add(id);
-		process.StartInfo = new ProcessStartInfo(Path.Join(binDir, CalibreDBFile), args)
-		{
-			WorkingDirectory = binDir,
-			UseShellExecute = false,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-		};
+		await RunCalibreDbAsync("设置元数据", args);
+	}
 
-		var errorBuilder = new StringBuilder();
-		process.ErrorDataReceived += (sender, e) =>
+	/// <summary>
+	/// 执行 calibredb，返回标准输出和标准错误。
+	/// </summary>
+	/// <param name="action">失败信息里的动作名，例如「读取」。</param>
+	/// <param name="args">传给 calibredb 的参数。</param>
+	/// <param name="onOutputLine">标准输出的逐行回调，用于从输出里解析结果。</param>
+	/// <exception cref="Exception">退出码非 0，或者在退出码为 0 的情况下写入了标准错误。</exception>
+	private async Task<ProcessResult> RunCalibreDbAsync(string action, IEnumerable<string> args, Action<string>? onOutputLine = null)
+	{
+		ProcessResult result;
+		try
 		{
-			if (!string.IsNullOrEmpty(e.Data))
-			{
-				errorBuilder.Append(e.Data);
-			}
-		};
-		process.Start();
-
-		process.BeginOutputReadLine();
-		process.BeginErrorReadLine();
-		await process.WaitForExitAsync();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception($"设置元数据失败: {process.ExitCode}, {errorBuilder}");
+			result = await ProcessRun.RunAsync(Path.Join(binDir, CalibreDBFile), args, onOutputLine, workingDirectory: binDir);
 		}
-		else if (errorBuilder.Length > 0)
+		catch (Exception e) when (e is not OperationCanceledException)
 		{
-			throw new Exception($"设置元数据失败: {errorBuilder}");
+			throw new Exception($"{action}失败: {e.Message}");
 		}
+		// calibredb 有时候只往标准错误里写一句提示，退出码仍然是 0。
+		if (result.StdErr.Trim().Length > 0)
+		{
+			throw new Exception($"{action}失败: {result.StdErr.Trim()}");
+		}
+		return result;
 	}
 
 	/// <summary>

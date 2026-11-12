@@ -21,7 +21,7 @@
 // 注意：单文件压缩（EnableCompressionInSingleFile）只在自包含发布时可用。
 #:property PublishSingleFile=true
 #:property SelfContained=false
-#:property RuntimeIdentifier=win-x64
+#:property RuntimeIdentifier=$(NETCoreSdkRuntimeIdentifier)
 #:property IncludeNativeLibrariesForSelfExtract=true
 #:property DebugType=embedded
 #nullable enable

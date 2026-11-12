@@ -1,8 +1,8 @@
 #!/usr/bin/env -S dotnet --
 #:include code-pages.cs
+#:include process.cs
 #nullable enable
 
-using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -19,7 +19,6 @@ class SevenZ
 	public static async Task Compress(SevenZConfig config, Action<string>? progressCallback = null)
 	{
 		CodePages.RegisterGBK();
-		using var process = new Process();
 		var args = new List<string>
 		{
 			"a", // 添加文件到压缩包
@@ -42,43 +41,26 @@ class SevenZ
 		}
 		args.Add(config.FileName);
 		args.AddRange(config.Files);
-		process.StartInfo = new ProcessStartInfo("7z", args)
+		try
 		{
-			WorkingDirectory = config.WorkingDirectory,
-			UseShellExecute = false,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-			// 避免乱码
-			StandardOutputEncoding = Encoding.GetEncoding("GBK"),
-			StandardErrorEncoding = Encoding.GetEncoding("GBK"),
-		};
-
-		var errorBuilder = new StringBuilder();
-		process.OutputDataReceived += (sender, e) =>
-		{
-			if (e.Data != null && progressCallback != null)
+			await ProcessRun.RunAsync("7z", args, line =>
 			{
-				var match = SevenZProgressRegex.Match(e.Data.Trim());
+				if (progressCallback == null)
+				{
+					return;
+				}
+				var match = SevenZProgressRegex.Match(line.Trim());
 				if (match.Success)
 				{
 					progressCallback(match.Value);
 				}
-			}
-		};
-		process.ErrorDataReceived += (sender, e) =>
+			}, workingDirectory: config.WorkingDirectory, encoding: Encoding.GetEncoding("GBK"));
+		}
+		catch (Exception e) when (e is not OperationCanceledException)
 		{
-			if (e.Data != null)
-			{
-				errorBuilder.AppendLine(e.Data);
-			}
-		};
-		process.Start();
-		process.BeginOutputReadLine();
-		process.BeginErrorReadLine();
-		await process.WaitForExitAsync();
-		if (process.ExitCode != 0)
-		{
-			throw new Exception($"压缩失败: {process.ExitCode}, {errorBuilder}");
+			// 7z 把真正的错误写到标准输出，ProcessRun 抛出的消息大多是「7z 退出码 N」，
+			// 加上操作名，调用方才知道是哪一步压缩失败的。
+			throw new Exception($"压缩失败: {e.Message}");
 		}
 	}
 }

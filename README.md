@@ -5,6 +5,7 @@
 - [calibre 书库备份](./calibre-backup.md)
 - [压缩图片和视频](./compress-media.md)
 - [打包 epub](./pack-epub.md)
+- [有声书 m4b 合并与编辑](./audiobook.md)
 - [从图片识别书籍目录](./recognize-contents.md)
 - [Web 工具](https://cyjb.github.io/Tools/)
   - LRC 歌词合并
