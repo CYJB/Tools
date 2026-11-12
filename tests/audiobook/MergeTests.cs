@@ -167,4 +167,18 @@ public sealed class MergeTests(TestEnv env)
 		// 有 Xing 头时容器时长精确到 0.1ms 以内，不该白付一遍完整解码的代价。
 		Assert.DoesNotContain("缺少 Xing 头", Text.Flat(env.RunOk("merge", env.Dir("cbr_xing"), "-o", cbr)));
 	}
+
+	[Theory(DisplayName = "缺 Xing 头：必须走 filter_complex，否则 concat 会按估算时长截断每一段")]
+	[InlineData("vbr_noxing")]
+	[InlineData("cbr_noxing")]
+	public void EstimatedDurationForcesFilter(string fixture)
+	{
+		// concat demuxer 是用「每一段的容器时长」决定这一段有多长的，而缺 Xing/VBRI 头的 mp3 只有
+		// 按码率估算出来的时长，于是每个非末尾文件都被截断（实测一本 30 分钟的书整整少了 1.2 秒，
+		// 退出码 0、日志里没有任何异常）。只能改走 filter_complex，让每个输入自己解码。
+		string output = env.Out($"est-{fixture}-{Guid.NewGuid():N}.m4b");
+		string log = Text.Flat(env.RunOk("merge", env.Dir(fixture), "-o", output));
+		Assert.Contains("filter_complex", log);
+		Assert.Equal(6, Probe.Of(output).ChapterCount);
+	}
 }

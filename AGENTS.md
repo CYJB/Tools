@@ -69,9 +69,10 @@ dotnet test tests/audiobook/Audiobook.Tests.csproj
 
 它是**端到端**测试：夹具用 `dotnet build audiobook.cs -o <临时目录>` 构建出真实的可执行文件再调用，而不是把源码编进测试程序集（`audiobook.cs` 有顶层语句，一个程序集里只能有一份）。ffmpeg 优先用 `utils/ffmpeg/` 下自带的，找不到时回退到 PATH，所以在 Windows 和 macOS 上都能跑。详见 [tests/audiobook/CONTEXT.md](tests/audiobook/CONTEXT.md)。
 
-给这个仓库写测试时有两个坑：
+给这个仓库写测试时有三个坑：
 
 - **断言消息内容要先折叠空白**。Spectre 会按控制台宽度折行，输出被重定向时同样会折，于是「不是 m4b 容器」这种短语可能被拆到两行，直接 `Assert.Contains` 就匹配不上。用 `Text.Flat()` 或 `ProcessResult.FlatOutput`。反过来，`info --json` 那种机器可读的输出绝不能走 `AnsiConsole.WriteLine`（它还会把 JSON 里的 `[ ]` 当 markup 解析），必须走原始 stdout。
+- **输出编码**。.NET 在没有控制台（输出被重定向）时会退回系统 ANSI 代码页，简体中文下是 GBK，于是子进程写出的中文和测试按 UTF-8 解码的结果对不上，所有断言中文的用例都会失败。`audiobook.cs` 因此在 `Console.IsOutputRedirected` 时显式把 `Console.OutputEncoding` 设成 UTF-8（交互式终端里保持系统代码页），测试侧固定按 UTF-8 解码。
 - **测试不能并行**。它们共享一个工作区目录，合并产物就放在素材目录旁边。`TestEnv.cs` 顶部有 `[assembly: CollectionBehavior(DisableTestParallelization = true)]`。
 
 ## 在工作区发布 exe 的坑（重要）

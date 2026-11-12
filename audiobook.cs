@@ -41,6 +41,14 @@ using Cyjb;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+// 输出被重定向（脚本、测试、管道）时按 UTF-8 写：机器读的输出按 UTF-8 解码是惯例，
+// 而 .NET 在没有控制台时会退回系统 ANSI 代码页（简体中文下是 GBK），调用方按 UTF-8 读就全是乱码。
+// 交互式终端里保持系统代码页不变，免得在 GBK 控制台上中文显示异常。
+if (Console.IsOutputRedirected)
+{
+	Console.OutputEncoding = new UTF8Encoding(false);
+}
+
 return await ConsoleApp.RunAsyncWithCancellation(config =>
 {
 	config.AddCommand<MergeCommand>("merge").WithDescription("把目录下的音频合并成带章节的单个 m4b");
@@ -1175,6 +1183,7 @@ static class AudiobookUtils
 		long maxBitrate = 0;
 		int losslessCount = 0;
 		bool uniformParams = true;
+		bool hasEstimatedDuration = false;
 		for (int i = 0; i < probes.Length; i++)
 		{
 			var streams = probes[i].Streams ?? [];
@@ -1219,12 +1228,18 @@ static class AudiobookUtils
 			// flac 的 stream.bit_rate 是 N/A，必须回退到 format.bit_rate；
 			// 反过来 mp3/m4a 的 format.bit_rate 会因为容器和标签开销虚高 2~4%，所以 stream 优先。
 			maxBitrate = Math.Max(maxBitrate, GetAudioBitrate(audio, probes[i].Format));
+			// 缺 Xing/VBRI 头的文件只有按码率估算的容器时长，concat demuxer 会拿它当这一段的长度。
+			hasEstimatedDuration |= probes[i].DurationEstimated;
 		}
-		// concat demuxer 只有在 codec、采样率、声道全部一致时才安全：
+		// concat demuxer 只有在 codec、采样率、声道全部一致、并且每个文件的时长都是准的时才安全：
 		// - codec 不一致会静默丢帧（日志刷 PTS invalid dropping，退出码 0）；
 		// - 采样率/声道不一致时，mp3 源看似能靠自动重采样蒙对，但 AAC(m4a) 源实测会丢掉一半音频
-		//   （6 秒的素材只出 3 秒），所以一并改走 filter_complex，由每个输入显式归一化后再拼接。
-		bool useFilter = !uniformCodec || hasVideoStream || !uniformParams;
+		//   （6 秒的素材只出 3 秒）；
+		// - 缺 Xing/VBRI 头的 mp3 只有按码率估算的容器时长，而 demuxer 就是拿它决定这一段的长度，
+		//   于是每个非末尾文件都被截断（实测每段少 0.5~1.4 秒，退出码 0、日志里没有任何异常），
+		//   整本书就这样无声无息地短了一截。
+		// 这三种情况都改走 filter_complex，由每个输入自己解码、显式归一化后再拼接。
+		bool useFilter = !uniformCodec || hasVideoStream || !uniformParams || hasEstimatedDuration;
 		// 只有走 demuxer 且全是 AAC 时才能直接复制音频流（真正无损）。
 		bool copyAudio = !useFilter && allAac;
 		// 目标码率：有损源对齐源里最高的码率（AAC-LC 效率高于 mp3，同码率下不会更差）；
@@ -1248,8 +1263,8 @@ static class AudiobookUtils
 			ctx.MarkupLine($"[yellow]{desc}：有 {losslessCount} 个无损源文件，将编码为 AAC —— 这一步是有损的，请确认已经备份原始无损文件[/]");
 		}
 
-		// 章节边界。缺少 Xing/VBRI 头的 mp3 只能按码率估算容器时长，实测每个文件能差 26ms，
-		// 逐章累积后上百个文件能差出几秒，所以这类文件改用完整解码得到的时长。
+		// 章节边界。缺少 Xing/VBRI 头的 mp3 只能按码率估算容器时长，实测每个文件能差几十毫秒到
+		// 一秒多（内容越不均匀差得越多），逐章累积后整本书能差出好几秒，所以这类文件改用完整解码得到的时长。
 		long[] durations = new long[audios.Length];
 		int estimatedCount = 0;
 		for (int i = 0; i < audios.Length; i++)
@@ -1266,7 +1281,7 @@ static class AudiobookUtils
 		}
 		if (estimatedCount > 0)
 		{
-			ctx.MarkupLine($"[grey]{desc}：{estimatedCount} 个文件缺少 Xing 头、容器时长不可靠，已改用解码时长计算章节边界[/]");
+			ctx.MarkupLine($"[grey]{desc}：{estimatedCount} 个文件缺少 Xing 头、容器时长不可靠，已改用解码时长计算章节边界，并改走 filter_complex 拼接避免被截断[/]");
 		}
 		var chapters = new List<ChapterInfo>();
 		long start = 0;

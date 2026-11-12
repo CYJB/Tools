@@ -8,7 +8,7 @@
 dotnet test tests/audiobook/Audiobook.Tests.csproj
 ```
 
-默认跑 73 个用例，约 1 分钟。需要 **.NET SDK 10.0.300 或更高版本**（`audiobook.cs` 用了 `#:include`），以及可用的 ffmpeg / ffprobe。
+默认跑 75 个用例，约 1 分钟。需要 **.NET SDK 10.0.300 或更高版本**（`audiobook.cs` 用了 `#:include`），以及可用的 ffmpeg / ffprobe。
 
 只有一个用例默认跳过：25 小时长书的时间戳回绕测试，因为它要造一个约 85MB 的文件。设置环境变量后运行：
 

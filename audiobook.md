@@ -193,12 +193,13 @@ dotnet run audiobook.cs -- apply 三体.m4b     # 写回，原文件留 三体.m
 | `-brand M4B`（少一个空格） | 被**静默忽略**并退回 `isom`，没有任何警告 | 常量固定为 4 字符 `"M4B "`，并走 `ArgumentList` 传参以保住末尾空格 |
 | 不传 `-metadata media_type=2` | 文件里根本没有 `stik` atom，Apple Books 不提供断点续听 | 每次都传 |
 | 混合 codec 走 concat demuxer | 静默丢帧，日志刷 `PTS ... invalid dropping`，退出码 0 | 探测到 codec 不一致时改走 `-filter_complex concat` |
+| **缺 Xing/VBRI 头的 mp3 走 concat demuxer** | demuxer 是拿「按码率估算的容器时长」决定每一段有多长的，所以**每个非末尾文件都被截断**（实测一本 30 分钟的书少了 1.2 秒），退出码 0、日志里没有任何异常，只有回读总时长才看得出来 | 看到 ffprobe 的「Estimating duration from bitrate」就改走 `-filter_complex`，章节边界也改用解码时长 |
 | 混合采样率走 `-c:a copy` | 静默损坏：48kHz 的采样按 44.1kHz 解释，约 9% 变调，时长显示还正常 | 只有 codec、采样率、声道全一致时才 copy |
 | **AAC(m4a) 源混合采样率走 concat demuxer** | 静默丢掉约一半音频（实测 6 秒素材只出 3 秒）。mp3 源看似能靠自动重采样蒙对，AAC 不行 | demuxer 路径要求采样率和声道也一致，否则走 `-filter_complex` |
 | **不固定 `-ar` / `-ac`** | ffmpeg 按**第一个输入**协商参数：22050/mono 的文件排在 44100/stereo 前面时，整本书输出成 22050/mono。也就是说章节文件的排列顺序会决定音质 | 显式传 `-ar <最大采样率> -ac <最大声道数>` |
 | **`concat` 滤镜的参数协商** | 同样按第一个输入协商。实测日志：`44100Hz stereo -> 22050Hz mono -> 44100Hz stereo`，即先降采样/downmix 再升回来，11kHz 以上永久丢失，而输出仍宣称 44100/stereo | 每个输入先显式 `aresample=<max>,aformat=sample_fmts=fltp:channel_layouts=<layout>` 归一化，再拼接 |
 | 源 mp3 带封面 | 有 2 条流，concat demuxer 的流匹配会错位 | 探测到视频流就走 `-filter_complex` |
-| 按容器时长累加算章节边界 | 缺 Xing/VBRI 头的 mp3 每个文件差约 26ms，**逐章累积**（100 多个文件能差出几秒） | ffprobe 提示「Estimating duration from bitrate」时，自动改用完整解码得到的时长 |
+| 按容器时长累加算章节边界 | 缺 Xing/VBRI 头的 mp3 每个文件差几十毫秒到一秒多（内容越不均匀差得越多），**逐章累积** | ffprobe 提示「Estimating duration from bitrate」时，自动改用完整解码得到的时长 |
 | **flac 的 `stream.bit_rate` 是 N/A** | 「对齐源码率」拿不到值。反过来 mp3/m4a 的 `format.bit_rate` 又因容器和标签开销虚高 2~4%（实测 mp3 `stream=128000` 而 `format=129838`） | stream 优先、format 兜底 |
 | 文件名按字符串排序 | `ch10` 排在 `ch2` 前面，整本书顺序错乱且不报错 | 自然序 |
 | 章节文件带 UTF-8 BOM | ffmpeg 静默丢掉第一章，退出码 0 | 自己解析文件、剥掉 BOM，再在临时目录里生成干净的 ffmetadata |
@@ -215,7 +216,7 @@ dotnet run audiobook.cs -- apply 三体.m4b     # 写回，原文件留 三体.m
 dotnet test tests/audiobook/Audiobook.Tests.csproj
 ```
 
-默认 73 个用例、约 1 分钟，覆盖三条拼接路径、自然序、章节增删改、往返幂等（含音频裸流 MD5 比对）、BOM/CRLF、全部报错路径、格式诊断、码率/采样率/声道对齐，以及用样本级 PCM 分析验证章节边界不会累积漂移。
+默认 75 个用例、约 1 分钟，覆盖三条拼接路径、自然序、章节增删改、往返幂等（含音频裸流 MD5 比对）、BOM/CRLF、全部报错路径、格式诊断、码率/采样率/声道对齐，以及用样本级 PCM 分析验证章节边界不会累积漂移。
 
 跑的是 `dotnet build audiobook.cs` 产出的真实可执行文件，Windows 和 macOS 都能跑。唯一一个默认跳过的用例是 25 小时长书的时间戳回绕测试（要造一个约 85MB 的文件），用 `$env:AUDIOBOOK_TEST_LONG = "1"` 打开。
 

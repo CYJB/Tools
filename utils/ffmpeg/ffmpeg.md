@@ -140,11 +140,12 @@ JPEG 和 PNG 都能 `-c:v copy`。换封面时不要再用 `-map 0:v`，否则�
 
 ### concat 的输入一致性
 
-安全规则：**concat demuxer 只在 codec、采样率、声道全部一致时才用**，其余情况一律走 filter_complex。下面每一条都是实测出来的，且失败时退出码都是 0。
+安全规则：**concat demuxer 只在 codec、采样率、声道全部一致、并且每个文件的时长都是准的时才用**，其余情况一律走 filter_complex。下面每一条都是实测出来的，且失败时退出码都是 0。
 
 - 全部一致且已经是 AAC → `-c:a copy`，无损且几秒完成。源是 `.aac`（ADTS）时要加 `-bsf:a aac_adtstoasc`。
 - **codec 不同** → 走 demuxer 会静默丢帧，日志刷 `PTS ... invalid dropping`。改用 `-filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[aout]"`。
 - **采样率不同 + AAC(m4a) 源** → 走 demuxer 即使重编码也会**静默丢掉约一半音频**（实测 6 秒素材只出 3 秒）。mp3 源在同样条件下看似正常（ffmpeg 自动插 aresample），所以这个坑只对 AAC 暴露——别把 mp3 的测试结果推广到 m4a。
+- **缺 Xing/VBRI 头的 mp3** → demuxer 是拿「按码率估算的容器时长」决定每一段有多长的，于**每个非末尾文件都被截断**（实测 3 个文件的书：每段少 0.5~1.4 秒，整本少 1.2 秒），退出码 0、`-v error` 下日志里什么都没有，只有回读总时长才发现。这类源必须走 filter_complex（或先把时长算准）。
 - **混合采样率走 `-c:a copy`** → 静默损坏，48kHz 的采样按 44.1kHz 解释，约 9% 变调，而时长显示还正常。
 - 源 mp3 带封面时有 2 条流，会让 demuxer 的流匹配错位，也要走 filter_complex。
 - mp3 直接 `-c:a copy` 进 mp4 会硬失败（`Could not find tag for codec mp3`），这是好事。
@@ -212,7 +213,7 @@ ffmpeg 原生 aac 编码器会自己饱和，请求再高也没用（实测 1 �
 
 ### 章节边界的漂移
 
-按 `ffprobe -show_entries format=duration` 累加算边界，在源文件**缺少 Xing/VBRI 头**时每个文件会差约 26ms 并且逐章累积（100 多个文件能差出几秒）。ffprobe 在 `-v warning` 下会提示：
+按 `ffprobe -show_entries format=duration` 累加算边界，在源文件**缺少 Xing/VBRI 头**时每个文件会差几十毫秒到一秒多（内容越不均匀差得越多）并且逐章累积。ffprobe 在 `-v warning` 下会提示：
 
 ```
 [mp3 @ 0x...] Estimating duration from bitrate, this may be inaccurate
