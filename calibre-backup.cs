@@ -447,7 +447,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					string metaBackupPath = Path.Combine(dir, MetadataBackupDB);
 					using (FileStream stream = File.Open(metaPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
 					{
-						using FileStream outStream = File.OpenWrite(metaBackupPath);
+						using FileStream outStream = File.Create(metaBackupPath);
 						await stream.CopyToAsync(outStream);
 					}
 					// 配置使用固定的 id。
@@ -1388,7 +1388,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// <summary>
 		/// 最新的文件列表。
 		/// </summary>
-		private readonly Dictionary<string, BackupFileInfo> files = new();
+		private readonly Dictionary<string, BackupFileInfo> files = [];
 		/// <summary>
 		/// 待备份的目录。
 		/// </summary>
@@ -1588,7 +1588,8 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				else
 				{
 					isChanged = true;
-					info.MD5 = fileMD5;
+					// 不要改共享的 info，复制一份，只有上传成功、item.Files = task.Files 时才生效。
+					info = new BackupFileInfo { MD5 = fileMD5, LastModified = info.LastModified, Group = info.Group };
 				}
 				files.Add(name, info);
 			}
