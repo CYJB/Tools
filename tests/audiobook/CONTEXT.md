@@ -8,7 +8,7 @@
 dotnet test tests/audiobook/Audiobook.Tests.csproj
 ```
 
-默认跑 75 个用例，约 1 分钟。需要 **.NET SDK 10.0.300 或更高版本**（`audiobook.cs` 用了 `#:include`），以及可用的 ffmpeg / ffprobe。
+默认跑 79 个用例，约 1 分半。需要 **.NET SDK 10.0.300 或更高版本**（`audiobook.cs` 用了 `#:include`），以及可用的 ffmpeg / ffprobe。
 
 只有一个用例默认跳过：25 小时长书的时间戳回绕测试，因为它要造一个约 85MB 的文件。设置环境变量后运行：
 
@@ -30,6 +30,7 @@ dotnet test tests/audiobook/Audiobook.Tests.csproj --filter "Category=Long"
 | `TestEnv.cs` | 集合夹具：构建工具、解析 ffmpeg、生成全部音频素材（约 60 个文件，覆盖 merge 的每条分支）。所有测试类共享一份，只跑一次 |
 | `Tool.cs` | `Proc`（跨平台跑进程，不用任何 shell）、`Probe`（ffprobe JSON → 便于断言的强类型字段）、`Text.Flat` |
 | `MergeTests.cs` | 三条拼接路径、自然序、封面识别、批量子目录、覆盖保护、空目录/无效路径 |
+| `LyricTests.cs` | 同名 lrc：字幕轨 + `©lyr`、时间轴按章节平移、GBK 歌词、`apply` 不丢歌词 |
 | `EditTests.cs` | export 格式、apply 往返幂等（含音频裸流 MD5）、章节增删改、元数据覆盖、BOM/CRLF、封面替换 |
 | `ErrorTests.cs` | apply 的全部报错路径：每条都要指出行号、都不能改动原文件 |
 | `InfoTests.cs` | 格式诊断：缺 stik、brand 退回 M4A、章节轨重复、封面缺 attached_pic |
@@ -59,6 +60,7 @@ dotnet test tests/audiobook/Audiobook.Tests.csproj --filter "Category=Long"
 | `brmix` | 128k + 320k，测码率对齐最高值 |
 | `flu` / `lossless` | flac / flac+wav，测无损源告警 |
 | `fmts` | flac/wav/mp3/m4a/opus/ogg 异构混合 |
+| `lyrics` | 同名 lrc：`01` 带头信息/一行多时间戳/超出章节的行，`02` 是 GBK，`03` 没有 lrc |
 | `cbr_xing` `cbr_noxing` `vbr_noxing` `vbr0_noxing` | tone/silence 交替 6 段，测章节边界漂移；只有 `vbr*_noxing` 会触发解码路径 |
 
 **`fmts` 里 ogg 那一项是可选的。** 仓库自带的 osxexperts 精简 ffmpeg 构建没有 vorbis 编码器，`TestEnv` 会探测并跳过，`QualityTests.HeterogeneousFormats` 按 `env.FormatCount` 实际文件数断言，所以两种情况都能过。

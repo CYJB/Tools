@@ -2,7 +2,7 @@
 
 各命令行工具都是 .NET 10 的[基于文件的应用](https://learn.microsoft.com/zh-cn/dotnet/core/sdk/file-based-apps)，通过 `#:include` 引用此目录下的共享模块。
 
-每个 `.cs` 文件都是独立的编译单元，会 `#:include` 自己依赖的模块，所以入口只需要引用直接依赖的模块。成员都放在静态类里（如 `SevenZ`、`Compress`、`FileUtils`、`ImageUtils`、`TaskRun`、`ProcessRun`、`VideoUtils`、`ConsoleApp`、`CodePages`、`BaiduPan`）。
+每个 `.cs` 文件都是独立的编译单元，会 `#:include` 自己依赖的模块，所以入口只需要引用直接依赖的模块。成员都放在静态类里（如 `SevenZ`、`Compress`、`FileUtils`、`ImageUtils`、`TaskRun`、`ProcessRun`、`VideoUtils`、`ConsoleApp`、`CodePages`、`Lrc`、`BaiduPan`）。
 
 ## 模块列表
 
@@ -23,6 +23,7 @@
 | `md5` | MD5 计算（`Md5Utils`） |
 | `string` | 字符串辅助（`StringUtils.RandomString`） |
 | `code-pages` | 字符编码支持（`CodePages.RegisterGBK`） |
+| `lrc` | lrc 歌词的解析、时间轴平移与序列化（`Lrc.Parse` / `Lrc.BuildCues` / `Lrc.ToLrc` / `Lrc.ToSrt` / `Lrc.FindSidecarFiles`，`audiobook` 用它把同名 lrc 合进 m4b；单元测试在 [tests/lrc](../tests/lrc/CONTEXT.md)） |
 
 ## 子目录
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env -S dotnet --
 
 /**
- * 有声书 m4b 工具：把目录下的音频合并成带章节的单个 m4b，也可以查看、导出和修改 m4b 的元数据与章节。
+ * 有声书 m4b 工具：把目录下的音频合并成带章节的单个 m4b（同名 lrc 会一起写进容器），
+ * 也可以查看、导出和修改 m4b 的元数据与章节。
  * 依赖 utils/ffmpeg 下自带的 ffmpeg / ffprobe。
  *
  * ffmpeg 在这个场景下有多个「退出码为 0 的静默失败」，本工具把它们全部固化成显式处理：
@@ -9,10 +10,13 @@
  * - apply 用 -map 0 会把原有的章节轨（一条 codec_type=data 的流）也带上，和新章节表叠加成两条；
  * - major_brand 是 muxer 选项、不走 metadata 映射，每次 -c copy 重封装都会退回 "M4A "；
  * - 混合 codec 走 concat demuxer 会静默丢帧，混合采样率走 -c:a copy 会静默变调；
- * - format.duration 是所有流的最大值，会被章节轨撑大，拿它校验输出等于用输入验证输入。
+ * - format.duration 是所有流的最大值，会被章节轨撑大，拿它校验输出等于用输入验证输入；
+ * - ffmetadata 没有多行值的表示法，把 lrc 歌词写进去会在换行处被静默截断（退出码 0）；
+ * - apply 用 -map 0:a 重封装会把 merge 写进容器的字幕轨静默丢掉。
  */
 #:include utils/console.cs
 #:include utils/file.cs
+#:include utils/lrc.cs
 #:include utils/process.cs
 #:include utils/task.cs
 #:include utils/video.cs
@@ -278,6 +282,21 @@ sealed class InfoCommand : AsyncCommand<InfoCommand.Settings>
 		AddRow("封面", covers.Length == 0 ? null : covers.Length == 1 && covers[0].IsAttachedPic
 			? "1 张"
 			: $"{covers.Length} 张（{(covers.All(c => c.IsAttachedPic) ? "" : "有流未标记 attached_pic，")}播放器可能不显示）");
+		// 歌词是 merge 从同名 lrc 合出来的两份：字幕轨（能跟着显示）和 ©lyr 元数据（纯文本）。
+		var subtitles = streams.Where(s => s.CodecType == "subtitle").ToArray();
+		string? lyricsTag = AudiobookUtils.GetTag(tags, "lyrics");
+		if (lyricsTag != null || subtitles.Length > 0)
+		{
+			List<string> parts = [];
+			if (lyricsTag != null)
+			{
+				parts.Add($"{lyricsTag.Length.ToString(CultureInfo.InvariantCulture)} 字符");
+			}
+			parts.Add(subtitles.Length == 0
+				? "没有字幕轨"
+				: $"{subtitles.Length.ToString(CultureInfo.InvariantCulture)} 条 {subtitles[0].CodecName} 字幕轨");
+			AddRow("歌词", string.Join("，", parts));
+		}
 		AnsiConsole.Write(grid);
 		AnsiConsole.WriteLine();
 
@@ -550,6 +569,10 @@ sealed class ApplyCommand : AsyncCommand<ApplyCommand.Settings>
 		{
 			AnsiConsole.MarkupLine("[yellow]章节文件里没有任何章节，将清空原有章节、只写入元数据[/]");
 		}
+		// 歌词（©lyr）和字幕轨都不在章节文件的白名单里，apply 必须原样保留：
+		// -map_metadata 会把没列出来的键丢掉，而 -map 0:a 只映射音频，字幕轨会被静默丢弃。
+		string? lyrics = AudiobookUtils.GetTag(probe.Format?.Tags, "lyrics");
+		int subtitleTracks = (probe.Streams ?? []).Count(s => s.CodecType == "subtitle");
 
 		string tempFile = output + ".tmp.m4b";
 		string metaFile = Path.Combine(Path.GetTempPath(), $"audiobook-{Guid.NewGuid():N}.txt");
@@ -579,8 +602,15 @@ sealed class ApplyCommand : AsyncCommand<ApplyCommand.Settings>
 				args.Add("-map");
 				args.Add("0:v?");
 			}
+			// 字幕轨（merge 写的歌词）也要显式映射，否则 -c copy 重封装时会漏掉这一条流。
+			args.AddRange(["-map", "0:s?"]);
 			// 没有章节时用 -map_chapters -1 清空，否则 ffmpeg 会保留原文件的章节。
 			args.AddRange(["-map_chapters", chaptersFile.Chapters.Count > 0 ? "1" : "-1", "-map_metadata", "1"]);
+			if (lyrics != null)
+			{
+				// ffmetadata 表示不了多行值，歌词只能作为命令行参数直接传，才能保住里面的换行。
+				args.AddRange(["-metadata", "lyrics=" + lyrics]);
+			}
 			args.AddRange(["-c", "copy"]);
 			// major_brand 是 muxer 选项、不走 metadata 映射，每次重封装都必须重新指定，
 			// 否则会退回 "M4A "，文件就不再被当成有声书。
@@ -588,7 +618,8 @@ sealed class ApplyCommand : AsyncCommand<ApplyCommand.Settings>
 			args.Add(tempFile);
 			await ProcessRun.RunAsync(VideoUtils.FFmpegPath, args, null, cancellationToken);
 			int expectedVideos = coverIndex >= 0 ? 1 : (probe.Streams ?? []).Count(s => s.CodecType == "video");
-			await AudiobookUtils.VerifyOutputAsync(tempFile, chaptersFile.Chapters, expectedVideos, duration, cancellationToken);
+			await AudiobookUtils.VerifyOutputAsync(tempFile, chaptersFile.Chapters, expectedVideos, duration, cancellationToken,
+				subtitleTracks, lyrics != null);
 			if (AudiobookUtils.PathEquals(output, file))
 			{
 				string backup = file + ".backup";
@@ -1086,8 +1117,16 @@ static class AudiobookUtils
 	/// ffmpeg 在多种静默损坏的场景下都返回 0（混合 codec 丢帧、混合采样率 copy 变调、
 	/// BOM 吃掉第一章、章节被钳制），所以每次输出都必须回读检查。
 	/// </remarks>
+	/// <param name="file">要校验的文件。</param>
+	/// <param name="chapters">期望的章节列表。</param>
+	/// <param name="expectedVideos">期望的封面流条数。</param>
+	/// <param name="expectedDuration">期望的音频时长（秒）。</param>
+	/// <param name="cancellationToken">取消令牌。</param>
+	/// <param name="expectedSubtitles">期望的字幕轨条数。</param>
+	/// <param name="expectLyrics">是否要求带 lyrics(©lyr) 元数据。</param>
 	public static async Task<FFprobeResult> VerifyOutputAsync(string file, IReadOnlyList<ChapterInfo> chapters,
-		int expectedVideos, double expectedDuration, CancellationToken cancellationToken)
+		int expectedVideos, double expectedDuration, CancellationToken cancellationToken,
+		int expectedSubtitles = 0, bool expectLyrics = false)
 	{
 		FFprobeResult probe = await ProbeAsync(file, cancellationToken);
 		var streams = probe.Streams ?? [];
@@ -1114,6 +1153,16 @@ static class AudiobookUtils
 		if (videos != expectedVideos)
 		{
 			problems.Add($"封面流应为 {expectedVideos} 条，实际为 {videos} 条");
+		}
+		int subtitles = streams.Count(s => s.CodecType == "subtitle");
+		if (subtitles != expectedSubtitles)
+		{
+			problems.Add($"字幕轨应为 {expectedSubtitles} 条，实际为 {subtitles} 条");
+		}
+		// 歌词同时写了两份（字幕轨 + ©lyr），少一份都说明有一边被 ffmpeg 静默丢掉了。
+		if (expectLyrics && string.IsNullOrEmpty(GetTag(tags, "lyrics")))
+		{
+			problems.Add("歌词元数据(©lyr)缺失");
 		}
 		var actual = probe.Chapters ?? [];
 		if (actual.Length != chapters.Count)
@@ -1298,6 +1347,25 @@ static class AudiobookUtils
 		}
 		long totalMs = start;
 
+		// 同名 lrc：01.mp3 旁边的 01.lrc 会被合成整本书的歌词。lrc 的时间戳是相对**单个文件**的
+		// （每个文件都从 [00:00] 开始），所以必须按章节起点逐条平移，否则整本书的歌词会全挤在开头。
+		LyricsInfo? lyrics = SidecarLyrics.Build(audios, chapters, durations);
+		bool hasLyrics = lyrics is { LineCount: > 0 };
+		if (lyrics != null)
+		{
+			if (hasLyrics)
+			{
+				string detail = (lyrics.MissingCount > 0 ? $"，{lyrics.MissingCount} 个音频没有同名 lrc" : "")
+					+ (lyrics.EmptyCount > 0 ? $"，{lyrics.EmptyCount} 个 lrc 里没有可用歌词" : "")
+					+ (lyrics.GbkCount > 0 ? $"，{lyrics.GbkCount} 个按 GBK 读取" : "");
+				ctx.MarkupLine($"[grey]{desc}：{lyrics.FileCount} 个同名 lrc 合成 {lyrics.LineCount} 行歌词，写入 mov_text 字幕轨和 ©lyr 元数据{detail}[/]");
+			}
+			else
+			{
+				ctx.MarkupLine($"[yellow]{desc}：{lyrics.FileCount} 个同名 lrc 里没有可用歌词（只有 ti / ar 这类头信息，或者时间戳都超出了音频长度），未写入[/]");
+			}
+		}
+
 		// 元数据。
 		var metadata = new List<KeyValuePair<string, string>>
 		{
@@ -1326,10 +1394,15 @@ static class AudiobookUtils
 		Directory.CreateDirectory(tempDir);
 		string listFile = Path.Combine(tempDir, "list.txt");
 		string metaFile = Path.Combine(tempDir, "meta.txt");
+		string srtFile = Path.Combine(tempDir, "lyrics.srt");
 		string tempOutput = output + ".tmp.m4b";
 		try
 		{
 			File.WriteAllText(metaFile, BuildFFMetadata(metadata, chapters, totalMs), Utf8NoBom);
+			if (hasLyrics)
+			{
+				File.WriteAllText(srtFile, lyrics!.SrtText, Utf8NoBom);
+			}
 			List<string> args = ["-hide_banner", "-nostdin", "-y", "-v", "error", "-progress", "pipe:1"];
 			// ffmpeg 按顺序解析参数，-map 这类输出选项一旦出现在 -i 之前就会报错，
 			// 所以必须先把所有输入声明完，再写输出选项。
@@ -1360,6 +1433,12 @@ static class AudiobookUtils
 				coverIndex = metaIndex + 1;
 				args.AddRange(["-i", cover]);
 			}
+			int subtitleIndex = -1;
+			if (hasLyrics)
+			{
+				subtitleIndex = (coverIndex >= 0 ? coverIndex : metaIndex) + 1;
+				args.AddRange(["-i", srtFile]);
+			}
 			// 以下是输出选项。
 			if (useFilter)
 			{
@@ -1389,7 +1468,18 @@ static class AudiobookUtils
 			{
 				args.AddRange(["-map", $"{coverIndex}:v", "-c:v", "copy", "-disposition:v:0", "attached_pic"]);
 			}
+			if (subtitleIndex >= 0)
+			{
+				// srt 要转成 mov_text(tx3g) 才能放进 mp4；字幕流不参与音频，-c:a copy 仍然是逐位搬运。
+				args.AddRange(["-map", $"{subtitleIndex}:s", "-c:s", "mov_text", "-disposition:s:0", "default"]);
+			}
 			args.AddRange(["-map_chapters", metaIndex.ToString(), "-map_metadata", metaIndex.ToString()]);
+			if (hasLyrics)
+			{
+				// ffmetadata 表示不了多行值（换行就是记录分隔符，后面的行会被静默丢掉），
+				// 所以歌词只能作为命令行参数直接传给 -metadata，这样才能保住里面的换行。
+				args.AddRange(["-metadata", "lyrics=" + lyrics!.LrcText]);
+			}
 			if (copyAudio)
 			{
 				args.AddRange(["-c:a", "copy"]);
@@ -1428,7 +1518,8 @@ static class AudiobookUtils
 					ctx.Status($"合并 {desc} [olive]{percent}%[/]");
 				}
 			}, cancellationToken);
-			FFprobeResult outputProbe = await VerifyOutputAsync(tempOutput, chapters, cover != null ? 1 : 0, totalSeconds, cancellationToken);
+			FFprobeResult outputProbe = await VerifyOutputAsync(tempOutput, chapters, cover != null ? 1 : 0, totalSeconds,
+				cancellationToken, hasLyrics ? 1 : 0, hasLyrics);
 			double actualDuration = GetAudioDuration(outputProbe);
 			string? outputDir = Path.GetDirectoryName(output);
 			if (outputDir != null)
@@ -1617,6 +1708,106 @@ static class ChaptersFileParser
 		ms = (hours * 3600L + minutes * 60 + seconds) * 1000 + millis;
 		return true;
 	}
+}
+
+/// <summary>
+/// 同名 lrc 合成出来的歌词，附带合并过程中的统计（用来给用户提示）。
+/// </summary>
+sealed class LyricsInfo
+{
+	/// <summary>整本书时间轴的歌词字幕。</summary>
+	public IReadOnlyList<LrcCue> Cues { get; init; } = [];
+
+	/// <summary>整本书时间轴的 lrc 文本，写进 ©lyr 元数据。</summary>
+	public string LrcText { get; init; } = "";
+
+	/// <summary>整本书时间轴的 srt 文本，转成 mov_text 字幕轨。</summary>
+	public string SrtText { get; init; } = "";
+
+	/// <summary>歌词行数。</summary>
+	public int LineCount => Cues.Count;
+
+	/// <summary>找到的同名 lrc 文件数。</summary>
+	public int FileCount { get; init; }
+
+	/// <summary>没有同名 lrc 的音频文件数。</summary>
+	public int MissingCount { get; init; }
+
+	/// <summary>有同名 lrc 但一个歌词行都解析不出来的文件数。</summary>
+	public int EmptyCount { get; init; }
+
+	/// <summary>按 GBK 读的 lrc 文件数（默认按 UTF-8 读）。</summary>
+	public int GbkCount { get; init; }
+}
+
+/// <summary>
+/// 把目录里「和音频同名的 .lrc」合成整本书的歌词。
+/// </summary>
+/// <remarks>
+/// 解析、按章节起点平移时间轴、序列化 lrc/srt 都在 <see cref="Lrc"/> 里；这里只负责把
+/// 「哪个音频对应哪个 lrc」和「这一段从哪开始、有多长」喂给它，并统计用于提示的数量。
+/// </remarks>
+static class SidecarLyrics
+{
+	/// <summary>
+	/// 合成整本书的歌词，一个同名 lrc 都没有时返回 <c>null</c>。
+	/// </summary>
+	/// <param name="audios">合并顺序的音频文件。</param>
+	/// <param name="chapters">与 <paramref name="audios"/> 一一对应的章节（提供章节起点）。</param>
+	/// <param name="durations">与 <paramref name="audios"/> 一一对应的时长（毫秒）。</param>
+	public static LyricsInfo? Build(IReadOnlyList<string> audios, IReadOnlyList<ChapterInfo> chapters, IReadOnlyList<long> durations)
+	{
+		// 目录只列一遍：一本书的几十个音频文件都在同一个目录下。
+		Dictionary<string, Dictionary<string, string>> cache = new(PathComparer);
+		List<LrcSegment> segments = [];
+		int fileCount = 0, missingCount = 0, emptyCount = 0, gbkCount = 0;
+		for (int i = 0; i < audios.Count; i++)
+		{
+			string dir = Path.GetDirectoryName(audios[i]) ?? "";
+			if (!cache.TryGetValue(dir, out Dictionary<string, string>? files))
+			{
+				files = Lrc.FindSidecarFiles(dir);
+				cache[dir] = files;
+			}
+			if (!files.TryGetValue(Path.GetFileNameWithoutExtension(audios[i]), out string? lrcFile))
+			{
+				missingCount++;
+				continue;
+			}
+			fileCount++;
+			List<LrcLine> lines = Lrc.ParseFile(lrcFile, out bool gbk);
+			if (gbk)
+			{
+				gbkCount++;
+			}
+			if (lines.Count == 0)
+			{
+				emptyCount++;
+				continue;
+			}
+			segments.Add(new LrcSegment(lines, chapters[i].StartMs, durations[i]));
+		}
+		if (fileCount == 0)
+		{
+			return null;
+		}
+		List<LrcCue> cues = Lrc.BuildCues(segments);
+		return new LyricsInfo
+		{
+			Cues = cues,
+			LrcText = cues.Count > 0 ? Lrc.ToLrc(cues) : "",
+			SrtText = cues.Count > 0 ? Lrc.ToSrt(cues) : "",
+			FileCount = fileCount,
+			MissingCount = missingCount,
+			EmptyCount = emptyCount,
+			GbkCount = gbkCount,
+		};
+	}
+
+	/// <summary>
+	/// 比较目录路径用的比较器：Windows 和 macOS 默认不区分大小写，Linux 区分。
+	/// </summary>
+	private static StringComparer PathComparer => OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
 }
 
 /// <summary>

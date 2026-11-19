@@ -20,8 +20,11 @@
 
   <ItemGroup>
 	<Compile Include="../audiobook.cs" />
+	<!-- `#:include` 在这个模式里不展开，所以模块要一个个列出来（包括 lrc 依赖的 code-pages）。 -->
+	<Compile Include="../utils/code-pages.cs" />
 	<Compile Include="../utils/console.cs" />
 	<Compile Include="../utils/file.cs" />
+	<Compile Include="../utils/lrc.cs" />
 	<Compile Include="../utils/process.cs" />
 	<Compile Include="../utils/task.cs" />
 	<Compile Include="../utils/video.cs" />

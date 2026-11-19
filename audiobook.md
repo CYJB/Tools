@@ -40,6 +40,7 @@ Calibre 的数据模型是「一条记录 → 每个格式恰好一个文件」�
 - `-c, --cover`：封面图片，默认在目录里自动识别（`cover.*` / `folder.*` / `0*.jpg` 等）。
 - `--chapter-title`：章节标题来源，`filename`（默认，用文件名）/ `tag`（用音频里的 title 标签，缺失时回退到文件名）/ `number`（用「第 N 章」）。
 - `-y, --overwrite`：覆盖已存在的输出文件。
+- 同名 lrc：`01.mp3` 旁边的 `01.lrc` 会自动合进 m4b，见下文[歌词](#歌词同名-lrc)。
 
 支持的音频格式：`mp3` `mp2` `m4a` `m4b` `aac` `flac` `wav` `ogg` `opus` `wma` `aif` `aiff`。
 
@@ -63,11 +64,26 @@ Calibre 的数据模型是「一条记录 → 每个格式恰好一个文件」�
 
 采样率和声道数一律取所有源里的**最大值**并显式固定。降采样和 downmix 是不可逆的损失，升采样只是补零。
 
+### 歌词：同名 lrc
+
+目录里的 `01.lrc` 会和 `01.mp3` 配对（按去掉扩展名的文件名匹配，扩展名不区分大小写），合并后同时写进 m4b 的两处：
+
+| 形式 | 说明 |
+|------|------|
+| `mov_text` 字幕轨 | 播放器里能跟着音频显示的字幕，时间轴已经按章节起点平移 |
+| `©lyr` 元数据 | 同样的歌词文本存一份，任何能读元数据的工具都看得到 |
+
+- lrc 的时间戳是**相对单个音频文件**的（每个文件都从 `[00:00]` 开始），工具会按章节起点逐条平移，整本书的歌词不会全挤在开头。每行的结束时间取下一行的开始时间、末行到章节结尾，所以字幕首尾相接、不会互相覆盖。
+- 一行多个时间戳（`[00:12.00][01:20.00]同一句`）、增强型 lrc 的词级时间戳（`<00:12.00>`）、只有时间戳没有文本的间奏占位都能正确处理；`[ti:]` / `[ar:]` 这类头信息会被忽略。
+- 没有同名 lrc 的音频直接跳过；时间戳超出该章节长度的行会被丢掉（lrc 和音频不配套时最典型的症状就是这种行）。
+- 编码：先按 UTF-8 读，失败再按 GBK，带 BOM 的 UTF-16 也认。歌词文件常是千千静听这类老工具导出的 GBK，按 UTF-8 硬读会静默变成乱码、还会一路写进书里。
+- 歌词不参与章节计算。`apply` 会原样保留字幕轨和 `©lyr`（改章节不会把歌词弄丢），`info` 会显示歌词字符数和字幕轨条数。
+
 ### info
 
 `dotnet run audiobook.cs -- info <file> [--json]`
 
-除了元数据和章节表，还会诊断几个「文件能播但体验不对」的问题：`major_brand` 不是 `M4B ` 时播放器会把它当普通音频、`media_type`(stik) 缺失时 Apple Books 不提供断点续听、章节轨多于一条时播放器可能显示过期的章节、封面流没标记 `attached_pic` 时可能不显示封面。
+除了元数据和章节表，还会诊断几个「文件能播但体验不对」的问题：`major_brand` 不是 `M4B ` 时播放器会把它当普通音频、`media_type`(stik) 缺失时 Apple Books 不提供断点续听、章节轨多于一条时播放器可能显示过期的章节、封面流没标记 `attached_pic` 时可能不显示封面。文件带歌词时，还会显示歌词字符数和字幕轨条数。
 
 ### export / apply
 
@@ -181,6 +197,22 @@ notepad 三体.txt                              # 改
 dotnet run audiobook.cs -- apply 三体.m4b     # 写回，原文件留 三体.m4b.backup
 ```
 
+6. 歌词一起进容器
+
+```
+三体/
+├── 01.mp3
+├── 01.lrc
+├── 02.mp3
+└── 02.lrc
+```
+
+```powershell
+dotnet run audiobook.cs -- merge 三体
+```
+
+每个 `01.lrc` 的歌词按所属章节的起点平移后合成一条，写进 m4b 的 `mov_text` 字幕轨和 `©lyr` 元数据，播放器里能跟着音频显示。
+
 ## ffmpeg 在这个场景下的静默失败
 
 这个工具的主要价值不是「拼命令」，而是把下面这些**退出码为 0、不报警告、但结果是错的**的坑固化成显式处理。手搓 ffmpeg 时每一条都可能踩到：
@@ -188,7 +220,7 @@ dotnet run audiobook.cs -- apply 三体.m4b     # 写回，原文件留 三体.m
 | 坑 | 后果 | 本工具的处理 |
 |----|------|-------------|
 | 省略 `-map_chapters` | ffmpeg 取「第一个有章节的输入」，改完章节后旧章节被静默保留 | 总是显式传 `-map_chapters`，无章节时传 `-1` |
-| `apply` 用 `-map 0` | 原有的章节轨（一条 `codec_type=data` 的流）被一起带上，和新章节表叠加成**两条**章节轨，播放器显示过期的那份 | 用 `-map 0:a -map 0:v?` 显式列举 |
+| `apply` 用 `-map 0` | 原有的章节轨（一条 `codec_type=data` 的流）被一起带上，和新章节表叠加成**两条**章节轨，播放器显示过期的那份 | 用 `-map 0:a -map 0:v? -map 0:s?` 显式列举 |
 | `-c copy` 重封装 | `major_brand` 是 muxer 选项、不走 metadata 映射，每次都会退回 `M4A `，文件不再被当成有声书 | 每次都重新传 `-brand "M4B "` 和 `-metadata media_type=2` |
 | `-brand M4B`（少一个空格） | 被**静默忽略**并退回 `isom`，没有任何警告 | 常量固定为 4 字符 `"M4B "`，并走 `ArgumentList` 传参以保住末尾空格 |
 | 不传 `-metadata media_type=2` | 文件里根本没有 `stik` atom，Apple Books 不提供断点续听 | 每次都传 |
@@ -201,6 +233,9 @@ dotnet run audiobook.cs -- apply 三体.m4b     # 写回，原文件留 三体.m
 | 源 mp3 带封面 | 有 2 条流，concat demuxer 的流匹配会错位 | 探测到视频流就走 `-filter_complex` |
 | 按容器时长累加算章节边界 | 缺 Xing/VBRI 头的 mp3 每个文件差几十毫秒到一秒多（内容越不均匀差得越多），**逐章累积** | ffprobe 提示「Estimating duration from bitrate」时，自动改用完整解码得到的时长 |
 | **flac 的 `stream.bit_rate` 是 N/A** | 「对齐源码率」拿不到值。反过来 mp3/m4a 的 `format.bit_rate` 又因容器和标签开销虚高 2~4%（实测 mp3 `stream=128000` 而 `format=129838`） | stream 优先、format 兜底 |
+| **lrc 的时间戳直接拼** | 每个文件的歌词都从 `[00:00]` 开始，拼起来整本书的歌词全挤在开头，退出码 0、没有任何提示 | 按章节起点逐条平移，字幕的结束时间取下一行的开始时间 |
+| **把多行歌词写进 ffmetadata** | 换行是 ffmetadata 的记录分隔符，第一行之后的歌词被**静默丢掉**（实测 `lyrics=[00:00.50]第一句` 只剩第一行） | 歌词走 `-metadata lyrics=...` 命令行参数，才能保住换行 |
+| **`apply` 用 `-map 0:a` + `-map_metadata 1`** | 重封装时字幕轨和 `©lyr` 被静默丢掉，「只改章节」变成了删歌词 | 显式 `-map 0:s?`，并把 `lyrics` 用 `-metadata` 带上 |
 | 文件名按字符串排序 | `ch10` 排在 `ch2` 前面，整本书顺序错乱且不报错 | 自然序 |
 | 章节文件带 UTF-8 BOM | ffmpeg 静默丢掉第一章，退出码 0 | 自己解析文件、剥掉 BOM，再在临时目录里生成干净的 ffmetadata |
 | `ffmpeg -f ffmetadata` 导出 | 吐 `TIMEBASE=1/10000000`（100 纳秒单位）、把末章 `END` 扩到总时长、并带出 `major_brand` / `minor_version` / `compatible_brands` / `encoder` 这些 muxer 内部键；原样喂回去会污染文件 | `export` 从 `ffprobe -show_chapters` 的 JSON 自己生成，只输出白名单里的键 |
@@ -216,9 +251,15 @@ dotnet run audiobook.cs -- apply 三体.m4b     # 写回，原文件留 三体.m
 dotnet test tests/audiobook/Audiobook.Tests.csproj
 ```
 
-默认 75 个用例、约 1 分钟，覆盖三条拼接路径、自然序、章节增删改、往返幂等（含音频裸流 MD5 比对）、BOM/CRLF、全部报错路径、格式诊断、码率/采样率/声道对齐，以及用样本级 PCM 分析验证章节边界不会累积漂移。
+默认 79 个用例、约 1 分半，覆盖三条拼接路径、自然序、章节增删改、往返幂等（含音频裸流 MD5 比对）、BOM/CRLF、全部报错路径、格式诊断、码率/采样率/声道对齐、同名 lrc 的字幕轨与歌词元数据，以及用样本级 PCM 分析验证章节边界不会累积漂移。
 
 跑的是 `dotnet build audiobook.cs` 产出的真实可执行文件，Windows 和 macOS 都能跑。唯一一个默认跳过的用例是 25 小时长书的时间戳回绕测试（要造一个约 85MB 的文件），用 `$env:AUDIOBOOK_TEST_LONG = "1"` 打开。
+
+歌词解析、时间轴平移、lrc/srt 序列化这些纯逻辑在 `utils/lrc.cs` 里，有单独的单元测试（39 个用例，不需要 ffmpeg）：
+
+```powershell
+dotnet test tests/lrc/Lrc.Tests.csproj
+```
 
 ## 发布为 exe
 

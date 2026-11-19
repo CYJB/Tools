@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 // 这些测试会读写共享的工作区目录（合并结果就放在素材目录旁边），并行跑会互相踩，所以关掉并行。
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
@@ -266,6 +267,20 @@ public sealed class TestEnv : IDisposable
 		CopyDirectory(Dir("uniform"), Path.Combine(Ws, "batch/书一"));
 		CopyDirectory(Dir("order"), Path.Combine(Ws, "batch/书二"));
 		Directory.CreateDirectory(Path.Combine(Ws, "empty"));
+
+		// lyrics：同名 lrc。01 带 [ti:] 头信息、[tr:] 语言标记、词级时间戳、一行多时间戳，
+		// 以及一行超出章节长度的垃圾；02 是 GBK 编码的老歌词；03 没有 lrc（测「没有 lrc 的文件直接跳过」）。
+		for (int i = 1; i <= 3; i++)
+		{
+			Gen($"lyrics/0{i}.mp3", 4, "-c:a", "libmp3lame");
+		}
+		File.WriteAllText(Path.Combine(Ws, "lyrics", "01.lrc"),
+			"[ti:第一章]\n[00:00.50]第一句\n[00:01.00][tr:zh]翻译\n"
+				+ "[00:02.00][00:03.00]同一句<00:02.50>出现两次\n[00:10.00]超出这一章\n",
+			new UTF8Encoding(false));
+		Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+		File.WriteAllBytes(Path.Combine(Ws, "lyrics", "02.lrc"),
+			Encoding.GetEncoding("GBK").GetBytes("[ti:第二章]\n[00:01.00]第二章的歌词\n"));
 
 		// drift：tone/silence 交替 6 段，用于样本级验证章节边界是否累积漂移。
 		// 静音段的真实起点就是对应章节的开始时间，可以解码成 PCM 后逐样本找出来当真值。

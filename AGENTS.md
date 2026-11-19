@@ -29,7 +29,7 @@
 ├── utils/                      # 共享工具库 → utils/CONTEXT.md
 ├── web/                        # Web 工具 → web/CONTEXT.md
 ├── project/                    # .csproj（仅用于 IDE 智能提示）
-├── tests/                      # 测试（目前只有 audiobook）→ tests/audiobook/CONTEXT.md
+├── tests/                      # 测试（audiobook 端到端、lrc 单元）→ tests/*/CONTEXT.md
 ├── images/                     # 文档图片
 ├── Tools.sln                   # VS 解决方案
 └── omnisharp.json              # OmniSharp 配置
@@ -49,7 +49,7 @@
 | `pg.cs` | 按「主密码 + 站点」生成固定密码，站点配置在 `pg.config.json` | config-holder |
 | `calibre-backup.cs` | 将 calibre 书库加密压缩并备份到百度网盘（`restore` 恢复书库、`clear-history` 清理历史记录） | 7z, baidu-pan, config-holder, md5, string |
 | `compress-media.cs` | 根据分辨率压缩图片和视频 | compress, console, task |
-| `audiobook.cs` | 把目录下的音频合并成带章节的 m4b（`merge`），也可以查看（`info`）、导出（`export`）和修改（`apply`）元数据与章节 | console, file, process, task, video |
+| `audiobook.cs` | 把目录下的音频合并成带章节的 m4b（`merge`，同名 lrc 一起写进容器），也可以查看（`info`）、导出（`export`）和修改（`apply`）元数据与章节 | console, file, lrc, process, task, video |
 
 入口只需要 `#:include` 直接依赖的模块，间接依赖由各模块自己 `#:include`（因此同一个文件可能被多次引入，编译时的 CS2002 警告属正常现象）。详见 [utils/CONTEXT.md](utils/CONTEXT.md)。
 
@@ -61,13 +61,16 @@
 
 ## 测试
 
-目前只有 `audiobook.cs` 有测试，在 `tests/audiobook/`，用 xUnit：
+两个 xUnit 测试工程：
 
 ```powershell
-dotnet test tests/audiobook/Audiobook.Tests.csproj
+dotnet test tests/audiobook/Audiobook.Tests.csproj   # audiobook 端到端，需要 ffmpeg，约 1 分半
+dotnet test tests/lrc/Lrc.Tests.csproj               # utils/lrc.cs 单元测试，不需要 ffmpeg，不到 1 秒
 ```
 
-它是**端到端**测试：夹具用 `dotnet build audiobook.cs -o <临时目录>` 构建出真实的可执行文件再调用，而不是把源码编进测试程序集（`audiobook.cs` 有顶层语句，一个程序集里只能有一份）。ffmpeg 优先用 `utils/ffmpeg/` 下自带的，找不到时回退到 PATH，所以在 Windows 和 macOS 上都能跑。详见 [tests/audiobook/CONTEXT.md](tests/audiobook/CONTEXT.md)。
+`tests/audiobook` 是**端到端**测试：夹具用 `dotnet build audiobook.cs -o <临时目录>` 构建出真实的可执行文件再调用，而不是把源码编进测试程序集（`audiobook.cs` 有顶层语句，一个程序集里只能有一份）。ffmpeg 优先用 `utils/ffmpeg/` 下自带的，找不到时回退到 PATH，所以在 Windows 和 macOS 上都能跑。详见 [tests/audiobook/CONTEXT.md](tests/audiobook/CONTEXT.md)。
+
+`tests/lrc` 简单得多：`utils/lrc.cs` 直接编进测试程序集（靠 `<Features>FileBasedProgram</Features>` 放开文件顶部那些 `#!` / `#:` 指令，`#:include` 不展开，所以 `code-pages.cs` 也要手工列出来），纯函数直接断言。详见 [tests/lrc/CONTEXT.md](tests/lrc/CONTEXT.md)。
 
 给这个仓库写测试时有三个坑：
 

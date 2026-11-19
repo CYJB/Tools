@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+	<TargetFramework>net10.0</TargetFramework>
+	<Nullable>enable</Nullable>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<IsPackable>false</IsPackable>
+	<!-- utils/*.cs 是 .NET 10 基于文件的应用的模块，顶部有 `#!` / `#:` 指令；
+	     这里直接把它们编进测试程序集（不是像 audiobook 测试那样跑 exe），所以要放开这些指令。 -->
+	<Features>FileBasedProgram</Features>
+  </PropertyGroup>
+
+  <!-- 包版本由 ../../Directory.Packages.props 集中管理。 -->
+  <ItemGroup>
+	<PackageReference Include="Microsoft.NET.Test.Sdk" />
+	<PackageReference Include="xunit" />
+	<PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Using Include="Xunit" />
+  </ItemGroup>
+
+  <!-- 被测模块。lrc.cs 自己 `#:include code-pages.cs`，但这套指令在普通工程里不展开，得手工列出。 -->
+  <ItemGroup>
+	<Compile Include="../../utils/code-pages.cs" />
+	<Compile Include="../../utils/lrc.cs" />
+  </ItemGroup>
+
+</Project>

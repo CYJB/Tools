@@ -152,11 +152,16 @@ public sealed class Probe
 	public string? Genre => Tag(Format.Tags, "genre");
 	public string? Date => Tag(Format.Tags, "date");
 	public string? Comment => Tag(Format.Tags, "comment");
+	/// <summary>©lyr 歌词元数据（merge 从同名 lrc 合出来的），没有时为 null。</summary>
+	public string? Lyrics => Tag(Format.Tags, "lyrics");
 
 	/// <summary>章节轨的条数。它在 ffprobe 里是 codec_type=data 的流（Nero chpl），不是 subtitle。</summary>
 	public int ChapterTracks => Streams.Count(s => s.CodecType == "data");
 	public int VideoStreams => Streams.Count(s => s.CodecType == "video");
 	public int AudioStreams => Streams.Count(s => s.CodecType == "audio");
+	public int SubtitleStreams => Streams.Count(s => s.CodecType == "subtitle");
+	/// <summary>字幕轨的编码，merge 写的是 mov_text（mp4 里的 tx3g）。</summary>
+	public string? SubtitleCodec => Streams.FirstOrDefault(s => s.CodecType == "subtitle")?.CodecName;
 	public bool AllAttachedPic => Streams.Where(s => s.CodecType == "video").All(s => s.Disposition?.GetValueOrDefault("attached_pic") == 1);
 
 	public int ChapterCount => Chapters.Length;
@@ -210,6 +215,14 @@ public sealed class Probe
 	public static string AudioMd5(string file)
 	{
 		return Proc.RunChecked(TestEnv.FFmpeg, ["-v", "error", "-i", file, "-map", "0:a", "-c", "copy", "-f", "md5", "-"]).Trim();
+	}
+
+	/// <summary>
+	/// 把字幕轨导成 srt 文本，用来验证歌词的时间轴是否按章节平移过。
+	/// </summary>
+	public static string ExtractSubtitles(string file)
+	{
+		return Proc.RunChecked(TestEnv.FFmpeg, ["-v", "error", "-i", file, "-map", "0:s", "-c:s", "srt", "-f", "srt", "-"]);
 	}
 }
 
