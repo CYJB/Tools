@@ -18,14 +18,25 @@
 #nullable enable
 
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-var app = new CommandApp<BackupCommand>();
+var app = new CommandApp();
+// `calibre-backup [path]` 仍然是备份，恢复用 `calibre-backup restore [path]`。
+app.SetDefaultCommand<BackupCommand>();
+app.Configure(config =>
+{
+	config.SetApplicationName("calibre-backup");
+	config.AddCommand<RestoreCommand>("restore").WithDescription("从网盘上的备份恢复书库");
+	config.AddCommand<ClearHistoryCommand>("clear-history").WithDescription("删除备份里的历史记录，当前的备份不动");
+});
 return await app.RunAsync(args);
 
 /// <summary>
@@ -52,6 +63,11 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		[DefaultValue("")]
 		public string? Dir { get; init; }
 
+		[Description("参与派生 config 密码的额外口令。会保存到配置中，只指定一次即可；恢复时必须提供同样的值。")]
+		[CommandOption("-k|--key")]
+		[DefaultValue("")]
+		public string? Key { get; init; }
+
 		[Description("保留的备份历史个数，默认为 3。")]
 		[CommandOption("--history")]
 		[DefaultValue("")]
@@ -59,54 +75,22 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 	}
 
 	/// <summary>
-	/// 备份配置的文件名。
-	/// </summary>
-	private const string BackupConfigFile = ".backup-config.json";
-	/// <summary>
-	/// 备份数据的文件名。
-	/// </summary>
-	private const string BackupDataFile = ".backup-data.csv";
-	/// <summary>
-	/// calibre 的元数据数据库。
-	/// </summary>
-	private const string MetadataDB = "metadata.db";
-	/// <summary>
-	/// 备份配置与元数据时使用的 ID。
-	/// </summary>
-	private const string ConfigId = "config";
-	/// <summary>
-	/// 书籍未再细分为多个文件时使用的分组名。
-	/// </summary>
-	private const string AllGroupName = "all";
-	/// <summary>
-	/// 迁移时为与目录同名的文件追加的后缀。
-	/// </summary>
-	private const string OldNameSuffix = ".old";
-
-	/// <summary>
 	/// 执行命令。
 	/// </summary>
 	protected override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
 	{
 		// 工作区里发布出来的 exe 会带「低完整性」标签，进程按低完整性启动后写不了书库里的普通文件。
-		if (IsLowIntegrity())
-		{
-			string exePath = Environment.ProcessPath ?? "calibre-backup.exe";
-			AnsiConsole.MarkupLine("[yellow]警告：当前进程是「低完整性」，写入书库会报 Access to the path is denied。[/]");
-			AnsiConsole.MarkupLine("[yellow]      工作区目录带低完整性标签，在里面发布出来的 exe 会让进程按低完整性启动。[/]");
-			AnsiConsole.MarkupLine("      请用工作区的 [green]publish-exe.cmd[/] 发布到 %USERPROFILE%\\bin 后再运行，或在管理员终端执行：");
-			AnsiConsole.MarkupLine($"      [green]icacls \"{exePath.EscapeMarkup()}\" /setintegritylevel Medium[/]");
-			AnsiConsole.WriteLine();
-		}
+		BackupUtils.WarnLowIntegrity("写入书库");
 		var currentDir = settings.Path ?? Directory.GetCurrentDirectory();
-		if (!File.Exists(Path.Combine(currentDir, MetadataDB)))
+		if (!File.Exists(Path.Combine(currentDir, BackupUtils.MetadataDB)))
 		{
 			AnsiConsole.MarkupLine($"[red]{currentDir.EscapeMarkup()}[/] 不是 calibre 电子书目录");
 			return 0;
 		}
-		ConfigHolder<BackupConfig> configHolder = new(Path.Combine(currentDir, BackupConfigFile));
+		ConfigHolder<BackupConfig> configHolder = new(Path.Combine(currentDir, BackupUtils.BackupConfigFile));
 		BackupConfig config = configHolder.Config;
-		bool needSave = false;
+		// 统一配置里的路径写法，避免在 Windows / macOS 之间交替备份时把同一批文件当成新文件重新打包。
+		bool needSave = BackupUtils.NormalizeConfig(config);
 		if (settings.History.HasValue)
 		{
 			config.History = settings.History.Value;
@@ -114,13 +98,19 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 		if (!string.IsNullOrEmpty(settings.Dir))
 		{
-			config.Dir = NormalizeDir(settings.Dir);
+			config.Dir = BackupUtils.NormalizeDir(settings.Dir);
+			needSave = true;
+		}
+		if (!string.IsNullOrEmpty(settings.Key))
+		{
+			// 空值改不了已经设过的额外口令，要清除只能直接改配置。
+			config.Key = settings.Key;
 			needSave = true;
 		}
 		if (string.IsNullOrEmpty(config.Dir))
 		{
 			// 不指定备份目录容易误覆盖，这里总是询问。
-			config.Dir = NormalizeDir(AnsiConsole.Ask<string>("请输入网盘的备份目录:"));
+			config.Dir = BackupUtils.NormalizeDir(AnsiConsole.Ask<string>("请输入网盘的备份目录:"));
 			needSave = true;
 		}
 		if (needSave)
@@ -130,7 +120,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		// 列出备份文件信息。
 		if (settings.ListData)
 		{
-			ListData(config, Path.Combine(currentDir, BackupDataFile));
+			ListData(config, Path.Combine(currentDir, BackupUtils.BackupDataFile));
 		}
 		else
 		{
@@ -140,97 +130,6 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 		return 0;
 	}
-
-	/// <summary>
-	/// 标准化备份目录。
-	/// </summary>
-	private static string NormalizeDir(string dir)
-	{
-		if (!dir.StartsWith('/'))
-		{
-			dir = "/" + dir;
-		}
-		if (!dir.EndsWith('/'))
-		{
-			dir += "/";
-		}
-		return dir;
-	}
-
-	/// <summary>
-	/// 判断当前进程是否运行在「低完整性」级别。
-	/// </summary>
-	/// <remarks>
-	/// 工作区目录带 Windows「低完整性」标签，在里面 dotnet publish 出来的 exe 会继承该标签，
-	/// 进程按低完整性启动后就写不了普通（中等完整性）文件，例如书库里的 .backup-config.json。
-	/// </remarks>
-	private static bool IsLowIntegrity()
-	{
-		if (!OperatingSystem.IsWindows())
-		{
-			return false;
-		}
-		IntPtr token = IntPtr.Zero;
-		IntPtr buffer = IntPtr.Zero;
-		try
-		{
-			if (!OpenProcessToken(GetCurrentProcess(), TokenQuery, out token))
-			{
-				return false;
-			}
-			// 先问需要多大的缓冲区。
-			GetTokenInformation(token, TokenIntegrityLevel, IntPtr.Zero, 0, out int length);
-			if (length <= 0)
-			{
-				return false;
-			}
-			buffer = Marshal.AllocHGlobal(length);
-			if (!GetTokenInformation(token, TokenIntegrityLevel, buffer, length, out _))
-			{
-				return false;
-			}
-			// TOKEN_MANDATORY_LABEL 的第一个字段是 SID 指针。
-			var sid = new SecurityIdentifier(Marshal.ReadIntPtr(buffer));
-			// S-1-16-4096 表示低完整性级别。
-			return sid.Value == "S-1-16-4096";
-		}
-		catch
-		{
-			return false;
-		}
-		finally
-		{
-			if (buffer != IntPtr.Zero)
-			{
-				Marshal.FreeHGlobal(buffer);
-			}
-			if (token != IntPtr.Zero)
-			{
-				CloseHandle(token);
-			}
-		}
-	}
-
-	/// <summary>
-	/// TOKEN_QUERY 权限。
-	/// </summary>
-	private const int TokenQuery = 0x0008;
-	/// <summary>
-	/// TOKEN_INFORMATION_CLASS.TokenIntegrityLevel。
-	/// </summary>
-	private const int TokenIntegrityLevel = 25;
-
-	[DllImport("advapi32.dll", SetLastError = true)]
-	private static extern bool OpenProcessToken(IntPtr processHandle, int desiredAccess, out IntPtr tokenHandle);
-
-	[DllImport("advapi32.dll", SetLastError = true)]
-	private static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
-
-	[DllImport("kernel32.dll")]
-	private static extern IntPtr GetCurrentProcess();
-
-	[DllImport("kernel32.dll", SetLastError = true)]
-	private static extern bool CloseHandle(IntPtr handle);
 
 	/// <summary>
 	/// 列出数据并保存到指定路径。
@@ -245,7 +144,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		foreach (var pair in config.Files)
 		{
 			// 书籍的备份文件都放在以 id 命名的目录中。
-			string path = pair.Key == ConfigId ? prefix + pair.Key : $"{prefix}{pair.Key}/";
+			string path = pair.Key == BackupUtils.ConfigId ? prefix + pair.Key : $"{prefix}{pair.Key}/";
 			data.Add(pair.Value.GetDataRow(path));
 		}
 		if (File.Exists(filePath))
@@ -254,94 +153,6 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 		File.WriteAllLines(filePath, data);
 		AnsiConsole.MarkupLine($"已将 [green]{data.Count - 1}[/] 条数据保存至 [green]{filePath.EscapeMarkup()}[/]");
-	}
-
-	/// <summary>
-	/// 备份配置。
-	/// </summary>
-	private class BackupConfig
-	{
-		/// <summary>
-		/// 备份路径。
-		/// </summary>
-		public string? Dir { get; set; } = null;
-		/// <summary>
-		/// 备份历史记录个数。
-		/// </summary>
-		public int? History { get; set; } = null;
-		/// <summary>
-		/// 文件列表。
-		/// </summary>
-		public Dictionary<string, BackupConfigItem> Files { get; set; } = new();
-	}
-
-	/// <summary>
-	/// 备份配置项。
-	/// </summary>
-	private class BackupConfigItem
-	{
-		/// <summary>
-		/// 书籍作者。
-		/// </summary>
-		public required string Author { get; set; }
-		/// <summary>
-		/// 书名。
-		/// </summary>
-		public required string Name { get; set; }
-		/// <summary>
-		/// 加密密码。
-		/// </summary>
-		public required string Pwd { get; set; }
-		/// <summary>
-		/// 压缩后大小。
-		/// </summary>
-		public long Size { get; set; }
-		/// <summary>
-		/// 书籍目录在最近一次备份后的修改时间（秒）；null 表示未知，下次需要校验。
-		/// </summary>
-		public long? FolderMtime { get; set; } = null;
-		/// <summary>
-		/// 书籍包含的文件信息。
-		/// </summary>
-		public required Dictionary<string, BackupFileInfo> Files { get; set; }
-
-		/// <summary>
-		/// 返回数据行。
-		/// </summary>
-		public string GetDataRow(string path)
-		{
-			return $"{path}\t{Name}\t{Author}\t{Pwd}\t\t{Size}";
-		}
-	}
-
-	/// <summary>
-	/// 备份文件的信息。
-	/// </summary>
-	private class BackupFileInfo
-	{
-		public BackupFileInfo()
-		{
-			MD5 = "";
-		}
-		public BackupFileInfo(string? group, string path)
-		{
-			var fileInfo = new FileInfo(path);
-			LastModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeMilliseconds();
-			MD5 = Md5Utils.CalculateFileMD5(path);
-			Group = group;
-		}
-		/// <summary>
-		/// 文件的修改时间。
-		/// </summary>
-		public long LastModified { get; set; }
-		/// <summary>
-		/// 文件的 MD5。
-		/// </summary>
-		public string MD5 { get; set; }
-		/// <summary>
-		/// 文件的分组。
-		/// </summary>
-		public string? Group { get; set; }
 	}
 
 	/// <summary>
@@ -357,14 +168,6 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// calibre 的元数据数据库备份。
 		/// </summary>
 		private const string MetadataBackupDB = "metadata_backup.db";
-		/// <summary>
-		/// calibre 的元数据备份。
-		/// </summary>
-		private const string MetadataDBPrefsBackup = "metadata_db_prefs_backup.json";
-		/// <summary>
-		/// 密码的字符范围。
-		/// </summary>
-		private const string PwdChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 		/// <summary>
 		/// 匹配书籍名的正则表达式。
 		/// </summary>
@@ -406,11 +209,73 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// 根目录下按书籍 id 归类的目录信息；null 表示还未整理。
 		/// </summary>
 		private Dictionary<string, BaiduPanFileInfo>? bookFolders = null;
+		/// <summary>
+		/// 距离上次写盘后又改动了多少本书。
+		/// </summary>
+		private int unsavedCount = 0;
+		/// <summary>
+		/// 上次写盘的时间，用来给写盘限流。
+		/// </summary>
+		private readonly Stopwatch saveTimer = Stopwatch.StartNew();
+		/// <summary>
+		/// 每改动这么多本书写一次配置。
+		/// </summary>
+		private const int SaveInterval = 50;
+		/// <summary>
+		/// 两次写盘之间最多间隔这么久。
+		/// </summary>
+		private const long SaveIntervalMilliseconds = 5000;
+		/// <summary>
+		/// 保护配置的修改与写盘。Ctrl+C 是在另一个线程上处理并直接退出的，可能和主流程同时动配置。
+		/// </summary>
+		private readonly object configLock = new();
 
 		/// <summary>
 		/// 获取备份的临时文件路径。
 		/// </summary>
 		public string BackupTempPath => backupTempPath;
+
+		/// <summary>
+		/// 写盘，调用方必须已经持有 <see cref="configLock"/>。
+		/// </summary>
+		private void SaveConfigFile()
+		{
+			unsavedCount = 0;
+			saveTimer.Restart();
+			configHolder.Save();
+		}
+
+		/// <summary>
+		/// 记录配置有改动，攒够一批再写盘。
+		/// </summary>
+		/// <remarks>
+		/// 配置里存着每本书每个文件的 MD5，大书库能有几 MB，每本书都序列化一遍会变成 O(书数²)。
+		/// 攒批最多丢掉几本书的进度，这些书下次会重新校验，不会影响正确性。
+		/// </remarks>
+		private void SaveConfig()
+		{
+			lock (configLock)
+			{
+				if (++unsavedCount >= SaveInterval || saveTimer.ElapsedMilliseconds >= SaveIntervalMilliseconds)
+				{
+					SaveConfigFile();
+				}
+			}
+		}
+
+		/// <summary>
+		/// 立刻把配置写盘。
+		/// </summary>
+		private void FlushConfig()
+		{
+			lock (configLock)
+			{
+				if (unsavedCount > 0)
+				{
+					SaveConfigFile();
+				}
+			}
+		}
 
 		/// <summary>
 		/// 备份到云盘。
@@ -419,61 +284,125 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		{
 			backupTempPath = Path.Combine(dir, BackupTempFile);
 
-			// 提前把与书籍目录同名的旧文件批量改名，迁移时就能直接创建目录、移动文件。
-			await PrepareLegacyRenames();
-
-			bool hasBackup = false;
-			var authors = Directory.GetDirectories(dir)
-				.Select(path => Path.GetFileName(path))
-				.Where(name => !name.StartsWith('.'))
-				.ToList();
-			for (int i = 0; i < authors.Count; i++)
+			// Ctrl+C 默认会直接杀掉进程，来不及把已经改好的进度写盘。
+			// 这里先把配置落盘，然后立刻退出，不等正在进行的压缩和上传。
+			ConsoleCancelEventHandler onCancelKeyPress = (sender, args) =>
 			{
-				var author = authors[i];
-				AnsiConsole.WriteLine($"正在扫描 {i + 1}/{authors.Count} {author}");
-				if (await BackupAuthor(Path.Combine(dir, author), author))
+				args.Cancel = true;
+				try
 				{
-					hasBackup = true;
+					FlushConfig();
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+				{
+					// 写不出来也只能退出。
+				}
+				// 退出前把光标恢复显示（进度渲染时可能把它藏了）。
+				try
+				{
+					AnsiConsole.Cursor.Show();
+				}
+				catch
+				{
+				}
+				Console.Error.WriteLine();
+				Console.Error.WriteLine("已中断，配置已保存");
+				Console.Out.Flush();
+				Console.Error.Flush();
+				Environment.Exit(130);
+			};
+			Console.CancelKeyPress += onCancelKeyPress;
+			try
+			{
+				// 提前把与书籍目录同名的旧文件批量改名，迁移时就能直接创建目录、移动文件。
+				await PrepareLegacyRenames();
+
+				bool hasBackup = false;
+				var authors = Directory.GetDirectories(dir)
+					.Select(path => Path.GetFileName(path))
+					.Where(name => !name.StartsWith('.'))
+					.ToList();
+				for (int i = 0; i < authors.Count; i++)
+				{
+					var author = authors[i];
+					AnsiConsole.WriteLine($"正在扫描 {i + 1}/{authors.Count} {author}");
+					if (await BackupAuthor(Path.Combine(dir, author), author))
+					{
+						hasBackup = true;
+					}
+				}
+				if (hasBackup)
+				{
+					// 压缩的是磁盘上的 .backup-config.json，先把攒着的改动写掉。
+					FlushConfig();
+					// 发生了备份操作，备份配置本身。
+					await AnsiConsole.Status().StartAsync($"    备份配置", async ctx =>
+					{
+						// calibre 在运行时会占用 metadata.db，会导致 7z 压缩失败。
+						// 总是将 metadata.db 备份为 metadata_backup.db，确保不会压缩失败。
+						string metaPath = Path.Combine(dir, BackupUtils.MetadataDB);
+						string metaBackupPath = Path.Combine(dir, MetadataBackupDB);
+						using (FileStream stream = File.Open(metaPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+						{
+							using FileStream outStream = File.Create(metaBackupPath);
+							await stream.CopyToAsync(outStream);
+						}
+						// 配置使用固定的 id。
+						var item = GetBackupConfigItem(BackupUtils.ConfigId, "", "config & metadata");
+						// config 的密码由备份目录（和可选的额外口令）派生，保证在完全没有本地文件的情况下，
+						// 只要知道备份目录就能解开 config，从而拿到每本书的密码。
+						// 密码写回配置后会改变 .backup-config.json，这次自然会被判定为需要重新上传。
+						string configPwd = BackupUtils.GetConfigPassword(cloudDir, configHolder.Config.Key);
+						lock (configLock)
+						{
+							if (item.Pwd != configPwd)
+							{
+								item.Pwd = configPwd;
+								SaveConfigFile();
+							}
+						}
+						BackupTask task = new(BackupUtils.ConfigId, item, dir);
+						BackupFileGroup group = new();
+						group.Files.Add(new FileInfo(Path.Combine(dir, BackupUtils.BackupConfigFile)));
+						group.Files.Add(new FileInfo(metaBackupPath));
+						group.Files.Add(new FileInfo(Path.Combine(dir, BackupUtils.MetadataDBPrefsBackup)));
+						await task.Backup(this, group, 0, (type, progress) =>
+						{
+							string message = $"    {type} config";
+							if (progress.Length > 0)
+							{
+								message += " " + progress;
+							}
+							ctx.Status(message);
+						});
+						// 上传完毕，保存配置。
+						item.Size = task.Size;
+						lock (configLock)
+						{
+							SaveConfigFile();
+						}
+					});
+				}
+
+				// 刷新本次运行中变动过的书籍目录的修改时间（上传/改名/删除/迁移都会改它）。
+				await RefreshFolderMtimes();
+			}
+			finally
+			{
+				try
+				{
+					// 中途失败也要把已经改好的部分落盘，免得下次重复上传。
+					FlushConfig();
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+				{
+					AnsiConsole.MarkupLine($"    [red]保存配置失败[/]: {e.Message.EscapeMarkup()}");
+				}
+				finally
+				{
+					Console.CancelKeyPress -= onCancelKeyPress;
 				}
 			}
-			if (hasBackup)
-			{
-				// 发生了备份操作，备份配置本身。
-				await AnsiConsole.Status().StartAsync($"    备份配置", async ctx =>
-				{
-					// calibre 在运行时会占用 metadata.db，会导致 7z 压缩失败。
-					// 总是将 metadata.db 备份为 metadata_backup.db，确保不会压缩失败。
-					string metaPath = Path.Combine(dir, MetadataDB);
-					string metaBackupPath = Path.Combine(dir, MetadataBackupDB);
-					using (FileStream stream = File.Open(metaPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-					{
-						using FileStream outStream = File.Create(metaBackupPath);
-						await stream.CopyToAsync(outStream);
-					}
-					// 配置使用固定的 id。
-					var item = GetBackupConfigItem(ConfigId, "", "config & metadata");
-					BackupTask task = new(ConfigId, item, dir);
-					BackupFileGroup group = new();
-					group.Files.Add(Path.Combine(dir, BackupConfigFile));
-					group.Files.Add(metaBackupPath);
-					group.Files.Add(Path.Combine(dir, MetadataDBPrefsBackup));
-					await task.Backup(this, group, 0, (type, progress) =>
-					{
-						string message = $"    {type} config";
-						if (progress.Length > 0)
-						{
-							message += " " + progress;
-						}
-						ctx.Status(message);
-					});
-					// 上传完毕，保存配置。
-					item.Size = task.Size;
-					configHolder.Save();
-				});
-			}
-
-			// 刷新本次运行中变动过的书籍目录的修改时间（上传/改名/删除/迁移都会改它）。
-			await RefreshFolderMtimes();
 		}
 
 		/// <summary>
@@ -555,7 +484,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				foreach (var pair in configHolder.Config.Files)
 				{
 					// 配置与元数据没有目录，不需要记录目录修改时间。
-					if (pair.Key == ConfigId || pair.Value.FolderMtime != null)
+					if (pair.Key == BackupUtils.ConfigId || pair.Value.FolderMtime != null)
 					{
 						continue;
 					}
@@ -581,7 +510,10 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 			}
 			if (needSave)
 			{
-				configHolder.Save();
+				lock (configLock)
+				{
+					SaveConfigFile();
+				}
 			}
 		}
 
@@ -985,7 +917,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		}
 
 		/// <summary>
-		/// 将未分组的旧备份文件归入 <see cref="AllGroupName"/> 分组。
+		/// 将未分组的旧备份文件归入 <see cref="BackupUtils.AllGroupName"/> 分组。
 		/// </summary>
 		/// <returns>是否修改了备份配置。</returns>
 		private bool UpdateUngroupedFiles(string id)
@@ -997,7 +929,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				{
 					if (info.Group == null)
 					{
-						info.Group = AllGroupName;
+						info.Group = BackupUtils.AllGroupName;
 						changed = true;
 					}
 				}
@@ -1120,15 +1052,15 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		private static bool TryGetNewFileName(string name, string id, out string newName)
 		{
 			newName = "";
-			if (name.StartsWith(id + OldNameSuffix, StringComparison.Ordinal))
+			if (name.StartsWith(id + BackupUtils.OldNameSuffix, StringComparison.Ordinal))
 			{
 				// 上次迁移时改过名，但还没来得及移动的文件。
-				newName = AllGroupName;
+				newName = BackupUtils.AllGroupName;
 				return true;
 			}
 			if (name == id)
 			{
-				newName = AllGroupName;
+				newName = BackupUtils.AllGroupName;
 				return true;
 			}
 			string rest;
@@ -1140,7 +1072,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				{
 					return false;
 				}
-				newName = $"{AllGroupName} {rest}";
+				newName = $"{BackupUtils.AllGroupName} {rest}";
 				return true;
 			}
 			if (!name.StartsWith(id + "_", StringComparison.Ordinal))
@@ -1168,10 +1100,10 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// </summary>
 		private static string GetFreeOldName(List<BaiduPanFileInfo> files, string id)
 		{
-			string name = id + OldNameSuffix;
+			string name = id + BackupUtils.OldNameSuffix;
 			for (int i = 2; files.Exists(file => file.Name == name); i++)
 			{
-				name = id + OldNameSuffix + i;
+				name = id + BackupUtils.OldNameSuffix + i;
 			}
 			return name;
 		}
@@ -1217,27 +1149,25 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					// 先迁移旧的备份文件命名，这样内容未改变时可以直接复用已有的备份。
 					bool migrated = await MigrateOldFiles(id);
 					var item = GetBackupConfigItem(id, author, name);
-					// 目录长度注意包含最后的目录分隔符。
-					var dirLen = dir.Length + 1;
-					var files = Directory.GetFiles(dir, "", SearchOption.AllDirectories);
+					// 一次枚举同时拿到路径、大小和修改时间，后面判断是否变化时也复用这些信息，不再重复取文件属性。
+					var files = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).ToList();
 					BackupTask task = new(id, item, dir);
 					List<BackupFileGroup> groups;
 					// 计算目录内所有文件的大小。
 					long totalSize = 0;
-					foreach (string file in files)
+					foreach (FileInfo fileInfo in files)
 					{
-						FileInfo fileInfo = new FileInfo(file);
 						totalSize += fileInfo.Length;
 					}
 					if (totalSize >= MultiFileThreshold)
 					{
 						// 按照文件类型分组上传。
-						groups = GroupFiles(files, dirLen);
+						groups = GroupFiles(files, dir);
 					}
 					else
 					{
 						// 不分组，直接整体上传。
-						BackupFileGroup group = new(AllGroupName);
+						BackupFileGroup group = new(BackupUtils.AllGroupName);
 						group.Files.AddRange(files);
 						groups = new() { group };
 					}
@@ -1259,7 +1189,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					{
 						item.Files = task.Files;
 						item.Size = task.Size;
-						configHolder.Save();
+						SaveConfig();
 						if (isBackup)
 						{
 							// 清理过期文件。
@@ -1291,26 +1221,29 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// <summary>
 		/// 分组指定的文件。
 		/// </summary>
+		/// <param name="files">书籍目录内的文件。</param>
+		/// <param name="dir">书籍目录。</param>
 		/// <remarks>
 		/// <list type="bullet">
 		/// <item>metadata.opf 和 cover.jpg 作为元数据 meta</item>
 		/// <item>data 作为 data</item>
 		/// <item>其它分组为对应的扩展名，没有扩展名的文件作为 other</item>
 		/// </list>
+		/// 判断分组用的一律是归一化后的相对路径（`/` 分隔），这样在不同平台上备份得到的文件名不会变。
 		/// </remarks>
-		private static List<BackupFileGroup> GroupFiles(ICollection<string> files, int dirLen)
+		private static List<BackupFileGroup> GroupFiles(ICollection<FileInfo> files, string dir)
 		{
 			// 按照文件类型分组。
 			List<BackupFileGroup> groups = new();
-			foreach (string filePath in files)
+			foreach (FileInfo file in files)
 			{
-				var fileName = filePath[dirLen..];
+				var fileName = BackupUtils.GetRelativeName(dir, file.FullName);
 				string groupName;
 				if (fileName == "metadata.opf" || fileName == "cover.jpg")
 				{
 					groupName = "meta";
 				}
-				else if (fileName == "data" || fileName.StartsWith("data" + Path.DirectorySeparatorChar))
+				else if (fileName == "data" || fileName.StartsWith("data/", StringComparison.Ordinal))
 				{
 					groupName = "data";
 				}
@@ -1326,7 +1259,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					group = new BackupFileGroup(groupName);
 					groups.Add(group);
 				}
-				group.Files.Add(filePath);
+				group.Files.Add(file);
 			}
 			return groups;
 		}
@@ -1336,19 +1269,23 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// </summary>
 		private BackupConfigItem GetBackupConfigItem(string id, string author, string name)
 		{
-			var files = configHolder.Config.Files;
-			if (!files.TryGetValue(id, out var item))
+			// 新增配置项会改变字典结构，Ctrl+C 的处理线程可能正在序列化它，所以要和写盘共用同一把锁。
+			lock (configLock)
 			{
-				item = new BackupConfigItem
+				var files = configHolder.Config.Files;
+				if (!files.TryGetValue(id, out var item))
 				{
-					Author = author,
-					Name = name,
-					Pwd = StringUtils.RandomString(7, 10, PwdChars),
-					Files = new(),
-				};
-				files.Add(id, item);
+					item = new BackupConfigItem
+					{
+						Author = author,
+						Name = name,
+						Pwd = StringUtils.RandomString(7, 10, BackupUtils.PwdChars),
+						Files = new(),
+					};
+					files.Add(id, item);
+				}
+				return item;
 			}
-			return item;
 		}
 	}
 
@@ -1362,9 +1299,9 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// </summary>
 		public string? Name { get; init; } = name;
 		/// <summary>
-		/// 分组的文件列表。
+		/// 分组的文件列表。用枚举出来的 FileInfo，大小和修改时间已经带在里面，不用再取一次属性。
 		/// </summary>
-		public List<string> Files { get; init; } = new();
+		public List<FileInfo> Files { get; init; } = new();
 	}
 
 	/// <summary>
@@ -1394,10 +1331,6 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// </summary>
 		private readonly string dir = dir;
 		/// <summary>
-		/// 目录部分的长度。
-		/// </summary>
-		private readonly int dirLen = dir.Length + ((dir.EndsWith('/') || dir.EndsWith('\\')) ? 0 : 1);
-		/// <summary>
 		/// 是否需要保存配置。
 		/// </summary>
 		private bool needSave = false;
@@ -1422,7 +1355,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// <summary>
 		/// 是否为配置与元数据的备份。
 		/// </summary>
-		private bool IsConfig => id == ConfigId;
+		private bool IsConfig => id == BackupUtils.ConfigId;
 		/// <summary>
 		/// 云盘中的目录名，配置与元数据直接放在根目录中。
 		/// </summary>
@@ -1469,7 +1402,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				FileName = backupTempPath,
 				WorkingDirectory = dir,
 				Password = password,
-				Files = group.Files,
+				Files = group.Files.Select(file => file.FullName).ToArray(),
 				EncrypteFileName = true,
 			};
 			await SevenZ.Compress(config, (progress) =>
@@ -1548,7 +1481,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		private string GetFileName(string? groupName)
 		{
 			// 配置与元数据直接使用 id 作为文件名，书籍使用分组名。
-			return IsConfig ? id : (groupName ?? AllGroupName);
+			return IsConfig ? id : (groupName ?? BackupUtils.AllGroupName);
 		}
 
 		/// <summary>
@@ -1560,7 +1493,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 			bool isChanged = false;
 			foreach (var file in group.Files)
 			{
-				var name = file[dirLen..];
+				var name = BackupUtils.GetRelativeName(dir, file.FullName);
 				if (!prevFiles.TryGetValue(name, out var info) || info.Group != groupName)
 				{
 					isChanged = true;
@@ -1569,8 +1502,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 				}
 				// 从旧文件列表中移除，便于最后统一移除已失效的备份。
 				prevFiles.Remove(name);
-				var fileInfo = new FileInfo(file);
-				var fileLastModified = new DateTimeOffset(fileInfo.LastWriteTime).ToUnixTimeMilliseconds();
+				var fileLastModified = new DateTimeOffset(file.LastWriteTime).ToUnixTimeMilliseconds();
 				if (info.LastModified == fileLastModified)
 				{
 					// 修改时间未发生改变，认为文件是相同的。
@@ -1578,7 +1510,7 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					continue;
 				}
 				// 比较 MD5。
-				string fileMD5 = Md5Utils.CalculateFileMD5(file);
+				string fileMD5 = Md5Utils.CalculateFileMD5(file.FullName);
 				if (fileMD5 == info.MD5)
 				{
 					// MD5 相同，回写修改时间。
@@ -1595,5 +1527,729 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 			}
 			return isChanged;
 		}
+	}
+}
+
+/// <summary>
+/// 恢复命令。
+/// </summary>
+sealed class RestoreCommand : AsyncCommand<RestoreCommand.Settings>
+{
+	/// <summary>
+	/// 命令的设置。
+	/// </summary>
+	public sealed class Settings : CommandSettings
+	{
+		[Description("恢复到的本地目录，默认为当前目录。")]
+		[CommandArgument(0, "[path]")]
+		public string? Path { get; init; }
+
+		[Description("网盘的备份目录，也就是备份时使用的目录；config 的密码由它派生。")]
+		[CommandOption("-d|--dir")]
+		[DefaultValue("")]
+		public string? Dir { get; init; }
+
+		[Description("备份时用 --key 指定的额外口令；没设置过就不用给。")]
+		[CommandOption("-k|--key")]
+		[DefaultValue("")]
+		public string? Key { get; init; }
+	}
+
+	/// <summary>
+	/// 恢复使用的临时目录名，位于目标目录下，恢复完成后删除。
+	/// </summary>
+	private const string RestoreTempDir = ".backup-restore";
+
+	/// <summary>
+	/// 执行命令。
+	/// </summary>
+	protected override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
+	{
+		string destDir = Path.GetFullPath(settings.Path ?? Directory.GetCurrentDirectory());
+		BackupUtils.WarnLowIntegrity("写入恢复目录");
+		// 目标目录里已经有备份配置时，直接用它记录的备份路径和额外口令。
+		BackupConfig? existsConfig = null;
+		string existsConfigPath = Path.Combine(destDir, BackupUtils.BackupConfigFile);
+		if (File.Exists(existsConfigPath))
+		{
+			existsConfig = new ConfigHolder<BackupConfig>(existsConfigPath).Config;
+		}
+		string? cloudDir = settings.Dir;
+		if (string.IsNullOrEmpty(cloudDir))
+		{
+			cloudDir = existsConfig?.Dir;
+		}
+		if (string.IsNullOrEmpty(cloudDir))
+		{
+			cloudDir = AnsiConsole.Ask<string>("请输入网盘的备份目录:");
+		}
+		cloudDir = BackupUtils.NormalizeDir(cloudDir);
+		string? key = string.IsNullOrEmpty(settings.Key) ? existsConfig?.Key : settings.Key;
+		string configPwd = BackupUtils.GetConfigPassword(cloudDir, key);
+		var cloud = new BaiduPan();
+		string tempDir = Path.Combine(destDir, RestoreTempDir);
+		AnsiConsole.MarkupLine($"准备将 [green]{cloudDir.EscapeMarkup()}[/] 恢复到 [green]{destDir.EscapeMarkup()}[/]");
+		Directory.CreateDirectory(destDir);
+		TryDeleteDirectory(tempDir);
+		Directory.CreateDirectory(tempDir);
+		try
+		{
+			// config 是唯一需要「先知道密码」的文件，解开它就拿到了每本书的密码和文件清单。
+			string configDir = Path.Combine(tempDir, "config");
+			string configArchive = Path.Combine(tempDir, "config.7z");
+			Directory.CreateDirectory(configDir);
+			var rootFiles = await cloud.List(cloudDir);
+			var configFile = rootFiles.Find(file => !file.IsDir && file.Name == BackupUtils.ConfigId);
+			if (configFile == null)
+			{
+				AnsiConsole.MarkupLine($"[red]{cloudDir.EscapeMarkup()} 里没有 config 备份文件，无法恢复。[/]");
+				return 1;
+			}
+			await AnsiConsole.Status().StartAsync("下载 config", async ctx =>
+			{
+				await cloud.Download(configFile.FsId, configArchive, progress => ctx.Status($"下载 config {progress:0.##}%"));
+			});
+			await Extract(configArchive, configDir, configPwd, "config");
+			string configPath = Path.Combine(configDir, BackupUtils.BackupConfigFile);
+			if (!File.Exists(configPath))
+			{
+				AnsiConsole.MarkupLine($"[red]config 里没有 {BackupUtils.BackupConfigFile.EscapeMarkup()}，无法恢复。[/]");
+				return 1;
+			}
+			BackupConfig backupConfig = new ConfigHolder<BackupConfig>(configPath).Config;
+			BackupUtils.NormalizeConfig(backupConfig);
+			// 逐本恢复。
+			int restored = 0;
+			List<string> failed = [];
+			var books = backupConfig.Files.Where(pair => pair.Key != BackupUtils.ConfigId).ToList();
+			for (int i = 0; i < books.Count; i++)
+			{
+				string id = books[i].Key;
+				BackupConfigItem item = books[i].Value;
+				string escapedName = Markup.Escape($"[{id}] {item.Name}");
+				try
+				{
+					await AnsiConsole.Status().StartAsync($"    恢复 {i + 1}/{books.Count} {escapedName}", async ctx =>
+					{
+						await RestoreBook(cloud, cloudDir, tempDir, destDir, id, item, ctx);
+					});
+					restored++;
+				}
+				catch (Exception e)
+				{
+					failed.Add($"[{id}] {item.Name}");
+					AnsiConsole.MarkupLine($"    [red]恢复 {escapedName} 失败[/]: {e.Message.EscapeMarkup()}");
+				}
+			}
+			// 恢复书库根目录的元数据，并写回备份配置，之后可以直接在这份书库上继续备份。
+			CopyFile(Path.Combine(configDir, "metadata_backup.db"), Path.Combine(destDir, BackupUtils.MetadataDB), true);
+			CopyFile(Path.Combine(configDir, BackupUtils.MetadataDBPrefsBackup), Path.Combine(destDir, BackupUtils.MetadataDBPrefsBackup), true);
+			string localConfig = Path.Combine(destDir, BackupUtils.BackupConfigFile);
+			if (File.Exists(localConfig))
+			{
+				AnsiConsole.MarkupLine($"    [yellow]{BackupUtils.BackupConfigFile.EscapeMarkup()} 已存在，保留原文件[/]");
+			}
+			else
+			{
+				File.Copy(configPath, localConfig);
+				// 写回的配置按归一化之后的路径重新保存一遍，避免还带着备份那个平台上的写法。
+				ConfigHolder<BackupConfig> localHolder = new(localConfig);
+				BackupUtils.NormalizeConfig(localHolder.Config);
+				localHolder.Save();
+			}
+			AnsiConsole.WriteLine();
+			AnsiConsole.MarkupLine($"已恢复 [green]{restored}[/] 本，失败 [red]{failed.Count}[/] 本");
+			foreach (string name in failed)
+			{
+				AnsiConsole.MarkupLine($"    [red]{Markup.Escape(name)}[/]");
+			}
+			return failed.Count == 0 ? 0 : 1;
+		}
+		finally
+		{
+			TryDeleteDirectory(tempDir);
+		}
+	}
+
+	/// <summary>
+	/// 恢复一本书。
+	/// </summary>
+	/// <param name="cloud">网盘操作。</param>
+	/// <param name="cloudDir">网盘的备份目录。</param>
+	/// <param name="tempDir">临时目录。</param>
+	/// <param name="destDir">恢复到的本地目录。</param>
+	/// <param name="id">书籍的 id。</param>
+	/// <param name="item">书籍的备份配置项。</param>
+	/// <param name="ctx">状态输出。</param>
+	private static async Task RestoreBook(BaiduPan cloud, string cloudDir, string tempDir, string destDir,
+		string id, BackupConfigItem item, StatusContext ctx)
+	{
+		string folder = $"{cloudDir}{id}/";
+		var cloudFiles = await cloud.List(folder);
+		if (cloudFiles.Count == 0)
+		{
+			throw new Exception($"云端没有 {folder}");
+		}
+		// 云端每本书一个目录，文件名就是分组名（未分组时是 all）。
+		var groups = item.Files.Values.Select(info => info.Group ?? BackupUtils.AllGroupName).Distinct(StringComparer.Ordinal).ToList();
+		if (groups.Count == 0)
+		{
+			throw new Exception("备份配置里没有这本书的文件");
+		}
+		// 书目录名与 calibre 的规则一致：{作者}/{书名} ({id})。
+		string bookDir = Path.Combine(destDir, ValidSegment(item.Author), $"{ValidSegment(item.Name)} ({id})");
+		string bookTemp = Path.Combine(tempDir, id);
+		try
+		{
+			foreach (string group in groups)
+			{
+				var cloudFile = cloudFiles.Find(file => !file.IsDir && file.Name == group);
+				if (cloudFile == null)
+				{
+					throw new Exception($"云端找不到 {folder}{group}");
+				}
+				string archive = Path.Combine(bookTemp, group + ".7z");
+				string extractDir = Path.Combine(bookTemp, "extract");
+				Directory.CreateDirectory(extractDir);
+				await cloud.Download(cloudFile.FsId, archive, progress => ctx.Status($"    下载 {group} {progress:0.##}%"));
+				await Extract(archive, extractDir, item.Pwd, $"{id}/{group}");
+				MoveFiles(extractDir, bookDir);
+				TryDeleteDirectory(extractDir);
+			}
+		}
+		finally
+		{
+			TryDeleteDirectory(bookTemp);
+		}
+	}
+
+	/// <summary>
+	/// 删除目录，失败时忽略：临时目录清不掉不影响恢复结果。
+	/// </summary>
+	private static void TryDeleteDirectory(string path)
+	{
+		try
+		{
+			if (Directory.Exists(path))
+			{
+				Directory.Delete(path, true);
+			}
+		}
+		catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+		{
+		}
+	}
+
+	/// <summary>
+	/// 解压指定文件，失败时带上是哪个备份文件解不开。
+	/// </summary>
+	private static async Task Extract(string archive, string outputDir, string password, string name)
+	{
+		try
+		{
+			await SevenZ.Extract(new()
+			{
+				FileName = archive,
+				OutputDirectory = outputDir,
+				Password = password,
+			});
+		}
+		catch (Exception e)
+		{
+			if (e.Message.Contains("password", StringComparison.OrdinalIgnoreCase))
+			{
+				throw new Exception($"解压 {name} 失败：密码不对。-d 必须与备份时一致（config 的密码由备份目录派生），"
+					+ "备份时用 --key 设过额外口令的话，恢复时也要用 -k 提供同样的值。", e);
+			}
+			throw new Exception($"解压 {name} 失败：{e.Message}", e);
+		}
+	}
+
+	/// <summary>
+	/// 把解压出来的文件按原有结构移动到书籍目录。
+	/// </summary>
+	/// <remarks>
+	/// 归档里存的是打包时相对书籍目录的路径。Windows 上打包的归档可能把分隔符存成了 <c>\</c>，
+	/// 在别的平台上解出来会变成文件名的一部分，所以这里统一按 <c>\</c> 和 <c>/</c> 拆开再拼。
+	/// </remarks>
+	private static void MoveFiles(string sourceDir, string destDir)
+	{
+		foreach (string file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+		{
+			string relative = Path.GetRelativePath(sourceDir, file);
+			string[] segments = relative.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+			if (segments.Length == 0 || segments.Contains(".") || segments.Contains(".."))
+			{
+				continue;
+			}
+			string target = Path.Combine([destDir, .. segments]);
+			string? parent = Path.GetDirectoryName(target);
+			if (!string.IsNullOrEmpty(parent))
+			{
+				Directory.CreateDirectory(parent);
+			}
+			File.Move(file, target, true);
+		}
+	}
+
+	/// <summary>
+	/// 换掉当前平台上不能用作文件名的字符，保证在别的平台生成的目录名也能落地。
+	/// </summary>
+	private static string ValidSegment(string name)
+	{
+		char[] invalid = Path.GetInvalidFileNameChars();
+		StringBuilder builder = new(name.Length);
+		foreach (char ch in name)
+		{
+			builder.Append(Array.IndexOf(invalid, ch) >= 0 ? '_' : ch);
+		}
+		string result = builder.ToString().Trim();
+		return result.Length == 0 ? "_" : result;
+	}
+
+	/// <summary>
+	/// 复制文件，源文件不存在时直接跳过。
+	/// </summary>
+	private static void CopyFile(string sourcePath, string destPath, bool overwrite)
+	{
+		if (File.Exists(sourcePath))
+		{
+			File.Copy(sourcePath, destPath, overwrite);
+		}
+	}
+}
+
+/// <summary>
+/// 清理历史记录命令。
+/// </summary>
+/// <remarks>
+/// 只删除书籍目录里的历史记录（<c>{分组名} {yyyy-MM-dd} ...</c>），当前的备份文件（<c>{分组名}</c>）不动。
+/// 根目录下旧命名方式留下的历史文件不在这里处理，备份时会自动迁移。
+/// </remarks>
+sealed class ClearHistoryCommand : AsyncCommand<ClearHistoryCommand.Settings>
+{
+	/// <summary>
+	/// 命令的设置。
+	/// </summary>
+	public sealed class Settings : CommandSettings
+	{
+		[Description("书库目录，默认为当前目录。")]
+		[CommandArgument(0, "[path]")]
+		public string? Path { get; init; }
+
+		[Description("删除前不再询问。")]
+		[CommandOption("-y|--yes")]
+		[DefaultValue(false)]
+		public bool Yes { get; init; }
+	}
+
+	/// <summary>
+	/// 匹配历史记录文件名的正则表达式：分组名 + 空格 + 日期，日期后面还可能跟哈希或时间。
+	/// </summary>
+	private static readonly Regex HistoryNameRegex = new(@" \d{4}-\d{2}-\d{2}( |$)");
+
+	/// <summary>
+	/// 执行命令。
+	/// </summary>
+	protected override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
+	{
+		string libraryDir = Path.GetFullPath(settings.Path ?? Directory.GetCurrentDirectory());
+		// 备份路径记在书库的备份配置里，不用再单独指定。
+		string configPath = Path.Combine(libraryDir, BackupUtils.BackupConfigFile);
+		if (!File.Exists(configPath))
+		{
+			AnsiConsole.MarkupLine($"[red]{libraryDir.EscapeMarkup()}[/] 里没有备份配置，先备份一次再来");
+			return 1;
+		}
+		string? cloudDir = new ConfigHolder<BackupConfig>(configPath).Config.Dir;
+		if (string.IsNullOrEmpty(cloudDir))
+		{
+			AnsiConsole.MarkupLine($"[red]{BackupUtils.BackupConfigFile.EscapeMarkup()}[/] 里没有记录备份路径，先备份一次再来");
+			return 1;
+		}
+		cloudDir = BackupUtils.NormalizeDir(cloudDir);
+		var cloud = new BaiduPan();
+		AnsiConsole.MarkupLine($"准备清理 [green]{cloudDir.EscapeMarkup()}[/] 里的历史记录");
+		// 先扫一遍统计要删多少，确认之后再动手。
+		List<(string Id, List<BaiduPanFileInfo> Files)> history = [];
+		long totalSize = 0;
+		var folders = (await cloud.List(cloudDir)).Where(file => file.IsDir).ToList();
+		await AnsiConsole.Status().StartAsync("正在扫描历史记录", async ctx =>
+		{
+			for (int i = 0; i < folders.Count; i++)
+			{
+				var folder = folders[i];
+				ctx.Status($"正在扫描历史记录 {i + 1}/{folders.Count}");
+				var files = await cloud.List($"{cloudDir}{folder.Name}/");
+				var historyFiles = files.Where(file => !file.IsDir && HistoryNameRegex.IsMatch(file.Name)).ToList();
+				if (historyFiles.Count > 0)
+				{
+					history.Add((folder.Name, historyFiles));
+					totalSize += historyFiles.Sum(file => file.Size);
+				}
+			}
+		});
+		int count = history.Sum(item => item.Files.Count);
+		if (count == 0)
+		{
+			AnsiConsole.MarkupLine("[green]没有需要清理的历史记录[/]");
+			return 0;
+		}
+		AnsiConsole.MarkupLine($"{history.Count} 本书共 [yellow]{count}[/] 个历史记录，{totalSize / 1024.0 / 1024.0:0.0} MB");
+		if (!settings.Yes && !AnsiConsole.Confirm("确认删除这些历史记录吗？当前的备份不会受影响。", false))
+		{
+			return 0;
+		}
+		int deleted = 0;
+		List<string> failed = [];
+		foreach (var (id, files) in history)
+		{
+			try
+			{
+				await cloud.Delete(files.Select(file => $"{cloudDir}{id}/{file.Name}").ToArray());
+				deleted += files.Count;
+			}
+			catch (Exception e)
+			{
+				failed.Add($"{id}：{e.Message}");
+			}
+		}
+		AnsiConsole.WriteLine();
+		AnsiConsole.MarkupLine($"已删除 [green]{deleted}[/] 个历史记录，失败 [red]{failed.Count}[/] 个");
+		foreach (string message in failed)
+		{
+			AnsiConsole.MarkupLine($"    [red]{message.EscapeMarkup()}[/]");
+		}
+		return failed.Count == 0 ? 0 : 1;
+	}
+}
+
+/// <summary>
+/// 备份配置。
+/// </summary>
+sealed class BackupConfig
+{
+	/// <summary>
+	/// 备份路径。
+	/// </summary>
+	public string? Dir { get; set; } = null;
+	/// <summary>
+	/// 参与派生 config 密码的额外口令，为空时只用备份目录派生。
+	/// </summary>
+	public string? Key { get; set; } = null;
+	/// <summary>
+	/// 备份历史记录个数。
+	/// </summary>
+	public int? History { get; set; } = null;
+	/// <summary>
+	/// 文件列表。
+	/// </summary>
+	public Dictionary<string, BackupConfigItem> Files { get; set; } = new();
+}
+
+/// <summary>
+/// 备份配置项。
+/// </summary>
+sealed class BackupConfigItem
+{
+	/// <summary>
+	/// 书籍作者。
+	/// </summary>
+	public required string Author { get; set; }
+	/// <summary>
+	/// 书名。
+	/// </summary>
+	public required string Name { get; set; }
+	/// <summary>
+	/// 加密密码。
+	/// </summary>
+	public required string Pwd { get; set; }
+	/// <summary>
+	/// 压缩后大小。
+	/// </summary>
+	public long Size { get; set; }
+	/// <summary>
+	/// 书籍目录在最近一次备份后的修改时间（秒）；null 表示未知，下次需要校验。
+	/// </summary>
+	public long? FolderMtime { get; set; } = null;
+	/// <summary>
+	/// 书籍包含的文件信息，键是相对书籍目录的路径（统一用 / 分隔）。
+	/// </summary>
+	public required Dictionary<string, BackupFileInfo> Files { get; set; }
+
+	/// <summary>
+	/// 返回数据行。
+	/// </summary>
+	public string GetDataRow(string path)
+	{
+		return $"{path}\t{Name}\t{Author}\t{Pwd}\t\t{Size}";
+	}
+}
+
+/// <summary>
+/// 备份文件的信息。
+/// </summary>
+sealed class BackupFileInfo
+{
+	public BackupFileInfo()
+	{
+		MD5 = "";
+	}
+	public BackupFileInfo(string? group, FileInfo file)
+	{
+		LastModified = new DateTimeOffset(file.LastWriteTime).ToUnixTimeMilliseconds();
+		MD5 = Md5Utils.CalculateFileMD5(file.FullName);
+		Group = group;
+	}
+	/// <summary>
+	/// 文件的修改时间。
+	/// </summary>
+	public long LastModified { get; set; }
+	/// <summary>
+	/// 文件的 MD5。
+	/// </summary>
+	public string MD5 { get; set; }
+	/// <summary>
+	/// 文件的分组。
+	/// </summary>
+	public string? Group { get; set; }
+}
+
+/// <summary>
+/// 备份与恢复共用的常量与路径工具。
+/// </summary>
+static class BackupUtils
+{
+	/// <summary>
+	/// 备份配置与元数据时使用的 ID。
+	/// </summary>
+	public const string ConfigId = "config";
+	/// <summary>
+	/// 书籍未再细分为多个文件时使用的分组名。
+	/// </summary>
+	public const string AllGroupName = "all";
+	/// <summary>
+	/// calibre 的元数据数据库。
+	/// </summary>
+	public const string MetadataDB = "metadata.db";
+	/// <summary>
+	/// calibre 的元数据备份，备份时用它代替被 calibre 占用的 metadata.db。
+	/// </summary>
+	public const string MetadataDBPrefsBackup = "metadata_db_prefs_backup.json";
+	/// <summary>
+	/// 备份配置的文件名。
+	/// </summary>
+	public const string BackupConfigFile = ".backup-config.json";
+	/// <summary>
+	/// 备份数据的文件名。
+	/// </summary>
+	public const string BackupDataFile = ".backup-data.csv";
+	/// <summary>
+	/// 迁移时为与目录同名的文件追加的后缀。
+	/// </summary>
+	public const string OldNameSuffix = ".old";
+	/// <summary>
+	/// 密码的字符范围。
+	/// </summary>
+	public const string PwdChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	/// <summary>
+	/// 派生 config 密码时的种子前缀，换算法时要改成 v2。
+	/// </summary>
+	private const string ConfigPwdSeed = "calibre-backup|config|v1|";
+	/// <summary>
+	/// 派生出的 config 密码长度。
+	/// </summary>
+	private const int ConfigPwdLength = 24;
+
+	/// <summary>
+	/// 标准化网盘的备份目录：统一用 / 分隔、以 / 开头和结尾，并做 Unicode 归一化。
+	/// </summary>
+	/// <remarks>
+	/// 这个结果同时是派生 config 密码的种子，所以必须与平台无关：用户写成 <c>书库备份</c>、<c>/书库备份/</c>
+	/// 或者用 <c>\</c> 分隔，都要得到同一个字符串。
+	/// </remarks>
+	public static string NormalizeDir(string dir)
+	{
+		StringBuilder builder = new("/");
+		foreach (string segment in dir.Replace('\\', '/').Normalize(NormalizationForm.FormC).Split('/', StringSplitOptions.RemoveEmptyEntries))
+		{
+			builder.Append(segment);
+			builder.Append('/');
+		}
+		return builder.ToString();
+	}
+
+	/// <summary>
+	/// 标准化书籍内文件的相对路径：统一用 / 分隔，并做 Unicode 归一化。
+	/// </summary>
+	/// <remarks>
+	/// Windows 上得到的是 \ 分隔的路径，macOS 上是 /；macOS 还可能给出分解形式的 Unicode
+	/// （例如带音标的字符）。备份配置里的键必须统一，否则换平台备份时会把同一批文件当成新文件重新打包上传。
+	/// </remarks>
+	public static string NormalizeRelativePath(string path)
+	{
+		return path.Replace('\\', '/').Normalize(NormalizationForm.FormC);
+	}
+
+	/// <summary>
+	/// 返回文件相对书籍目录的路径，统一用 / 分隔。
+	/// </summary>
+	public static string GetRelativeName(string dir, string file)
+	{
+		return NormalizeRelativePath(Path.GetRelativePath(dir, file));
+	}
+
+	/// <summary>
+	/// 返回由备份目录派生的 config 密码。
+	/// </summary>
+	/// <param name="dir">备份目录（已归一化）。</param>
+	/// <param name="key">额外口令，为空时只用备份目录派生。</param>
+	/// <remarks>
+	/// config 里存着每本书的随机密码，但它自己也在 config 里，所以密码不能来自 config 本身。
+	/// 用备份目录派生之后，只要知道备份目录（网盘上就看得见）就能解开 config，实现「从 0 恢复」；
+	/// 代价是知道备份目录的人也能解开，加密只用来避免内容被扫描、被和谐。
+	/// 需要更强的强度时用 <c>--key</c> 掺一个额外口令进去，但恢复时也要提供它。
+	/// </remarks>
+	public static string GetConfigPassword(string dir, string? key)
+	{
+		byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(ConfigPwdSeed + dir + "\n" + key));
+		StringBuilder builder = new(ConfigPwdLength);
+		for (int i = 0; i < ConfigPwdLength; i++)
+		{
+			builder.Append(PwdChars[hash[i] % PwdChars.Length]);
+		}
+		return builder.ToString();
+	}
+
+	/// <summary>
+	/// 判断当前进程是否运行在「低完整性」级别。
+	/// </summary>
+	/// <remarks>
+	/// 工作区目录带 Windows「低完整性」标签，在里面 dotnet publish 出来的 exe 会继承该标签，
+	/// 进程按低完整性启动后就写不了普通（中等完整性）文件，例如书库里的 .backup-config.json。
+	/// </remarks>
+	public static bool IsLowIntegrity()
+	{
+		if (!OperatingSystem.IsWindows())
+		{
+			return false;
+		}
+		IntPtr token = IntPtr.Zero;
+		IntPtr buffer = IntPtr.Zero;
+		try
+		{
+			if (!OpenProcessToken(GetCurrentProcess(), TokenQuery, out token))
+			{
+				return false;
+			}
+			// 先问需要多大的缓冲区。
+			GetTokenInformation(token, TokenIntegrityLevel, IntPtr.Zero, 0, out int length);
+			if (length <= 0)
+			{
+				return false;
+			}
+			buffer = Marshal.AllocHGlobal(length);
+			if (!GetTokenInformation(token, TokenIntegrityLevel, buffer, length, out _))
+			{
+				return false;
+			}
+			// TOKEN_MANDATORY_LABEL 的第一个字段是 SID 指针。
+			var sid = new SecurityIdentifier(Marshal.ReadIntPtr(buffer));
+			// S-1-16-4096 表示低完整性级别。
+			return sid.Value == "S-1-16-4096";
+		}
+		catch
+		{
+			return false;
+		}
+		finally
+		{
+			if (buffer != IntPtr.Zero)
+			{
+				Marshal.FreeHGlobal(buffer);
+			}
+			if (token != IntPtr.Zero)
+			{
+				CloseHandle(token);
+			}
+		}
+	}
+
+	/// <summary>
+	/// 进程处于「低完整性」时打印修复提示。
+	/// </summary>
+	/// <param name="action">接下来要做的写操作，例如「写入书库」。</param>
+	public static void WarnLowIntegrity(string action)
+	{
+		if (!IsLowIntegrity())
+		{
+			return;
+		}
+		string exePath = Environment.ProcessPath ?? "calibre-backup.exe";
+		AnsiConsole.MarkupLine($"[yellow]警告：当前进程是「低完整性」，{action.EscapeMarkup()}会报 Access to the path is denied。[/]");
+		AnsiConsole.MarkupLine("[yellow]      工作区目录带低完整性标签，在里面发布出来的 exe 会让进程按低完整性启动。[/]");
+		AnsiConsole.MarkupLine("      请用工作区的 [green]publish-exe.cmd[/] 发布到 %USERPROFILE%\\bin 后再运行，或在管理员终端执行：");
+		AnsiConsole.MarkupLine($"      [green]icacls \"{exePath.EscapeMarkup()}\" /setintegritylevel Medium[/]");
+		AnsiConsole.WriteLine();
+	}
+
+	/// <summary>
+	/// TOKEN_QUERY 权限。
+	/// </summary>
+	private const int TokenQuery = 0x0008;
+	/// <summary>
+	/// TOKEN_INFORMATION_CLASS.TokenIntegrityLevel。
+	/// </summary>
+	private const int TokenIntegrityLevel = 25;
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	private static extern bool OpenProcessToken(IntPtr processHandle, int desiredAccess, out IntPtr tokenHandle);
+
+	[DllImport("advapi32.dll", SetLastError = true)]
+	private static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+
+	[DllImport("kernel32.dll")]
+	private static extern IntPtr GetCurrentProcess();
+
+	[DllImport("kernel32.dll", SetLastError = true)]
+	private static extern bool CloseHandle(IntPtr handle);
+
+	/// <summary>
+	/// 标准化配置里的所有路径，返回是否有改动。
+	/// </summary>
+	public static bool NormalizeConfig(BackupConfig config)
+	{
+		bool changed = false;
+		string? dir = config.Dir;
+		if (!string.IsNullOrEmpty(dir))
+		{
+			string newDir = NormalizeDir(dir);
+			if (newDir != dir)
+			{
+				config.Dir = newDir;
+				changed = true;
+			}
+		}
+		foreach (BackupConfigItem item in config.Files.Values)
+		{
+			Dictionary<string, BackupFileInfo>? files = null;
+			foreach (var pair in item.Files)
+			{
+				string name = NormalizeRelativePath(pair.Key);
+				if (name == pair.Key)
+				{
+					continue;
+				}
+				files ??= new(item.Files, StringComparer.Ordinal);
+				files.Remove(pair.Key);
+				files[name] = pair.Value;
+				changed = true;
+			}
+			if (files != null)
+			{
+				item.Files = files;
+			}
+		}
+		return changed;
 	}
 }

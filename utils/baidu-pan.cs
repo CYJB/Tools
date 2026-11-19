@@ -36,6 +36,13 @@ public class BaiduPan
 	private const int ListAllPageSize = 1000;
 
 	private static readonly HttpClient httpClient = new();
+	/// <summary>
+	/// 下载文件用的客户端，下载时间远长于普通接口调用，单独放宽超时。
+	/// </summary>
+	private static readonly HttpClient downloadClient = new()
+	{
+		Timeout = TimeSpan.FromMinutes(30)
+	};
 
 	/// <summary>
 	/// 列出所有文件列表。
@@ -91,6 +98,75 @@ public class BaiduPan
 		string accessToken = await BaiduPanAuth.GetAccessTokenAsync();
 		UploadContext context = new(accessToken, uploadPath, filePath);
 		await context.Upload(progressCallback);
+	}
+
+	/// <summary>
+	/// 下载指定文件。
+	/// </summary>
+	/// <param name="fsid">文件的 id，可以从 <see cref="List"/> 的返回结果中获取。</param>
+	/// <param name="localPath">保存到的本地路径，目录不存在时会自动创建。</param>
+	/// <param name="progressCallback">下载进度回调（0~100）。</param>
+	/// <remarks>
+	/// 先用 <c>multimedia?method=filemetas</c> 用 fs_id 换取 dlink，再用 dlink 下载。
+	/// dlink 上必须补上 access_token，请求头里必须带百度网盘的 UA，否则会被拒绝（403）。
+	/// </remarks>
+	public async Task Download(long fsid, string localPath, Action<float>? progressCallback = null)
+	{
+		string accessToken = await BaiduPanAuth.GetAccessTokenAsync();
+		string dlink = await GetDownloadLink(accessToken, fsid);
+		string url = dlink + (dlink.Contains('?') ? "&" : "?") + "access_token=" + Uri.EscapeDataString(accessToken);
+		using var request = new HttpRequestMessage(HttpMethod.Get, url);
+		request.Headers.TryAddWithoutValidation("User-Agent", "pan.baidu.com");
+		using var response = await downloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+		if (!response.IsSuccessStatusCode)
+		{
+			throw new Exception($"下载失败：HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+		}
+		string? dir = Path.GetDirectoryName(localPath);
+		if (!string.IsNullOrEmpty(dir))
+		{
+			Directory.CreateDirectory(dir);
+		}
+		long total = response.Content.Headers.ContentLength ?? 0;
+		await using Stream input = await response.Content.ReadAsStreamAsync();
+		await using FileStream output = File.Create(localPath);
+		byte[] buffer = new byte[81920];
+		long received = 0;
+		int read;
+		while ((read = await input.ReadAsync(buffer)) > 0)
+		{
+			await output.WriteAsync(buffer.AsMemory(0, read));
+			received += read;
+			if (total > 0 && progressCallback != null)
+			{
+				progressCallback(received * 100f / total);
+			}
+		}
+	}
+
+	/// <summary>
+	/// 返回指定文件的下载地址。
+	/// </summary>
+	private async Task<string> GetDownloadLink(string accessToken, long fsid)
+	{
+		var url = MultimediaAPI + HttpUtils.BuildUriQuery(new() {
+			{ "method", "filemetas" },
+			{ "access_token", accessToken },
+			{ "fsids", $"[{fsid}]" },
+			{ "dlink", "1" },
+		});
+		var root = await GetJsonAsync(url);
+		if (!root.TryGetProperty("list", out var list) || list.GetArrayLength() == 0)
+		{
+			int errno = root.TryGetProperty("errno", out var errnoElement) ? errnoElement.GetInt32() : -1;
+			throw BaiduPanError.GetErrnoException(errno, $"[{fsid}]");
+		}
+		string? dlink = list[0].TryGetProperty("dlink", out var dlinkElement) ? dlinkElement.GetString() : null;
+		if (string.IsNullOrEmpty(dlink))
+		{
+			throw new Exception($"文件 {fsid} 没有返回下载地址");
+		}
+		return dlink;
 	}
 
 	/// <summary>

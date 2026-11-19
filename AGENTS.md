@@ -47,7 +47,7 @@
 | `convert-media.cs` | 把 flac/wav/wv 转成 320Kbps mp3，jp2/heic/webp 转成 png（`--image-format jpg` 可转 jpg） | file, task, video |
 | `convert2utf8.cs` | 把 txt 文本转换成 UTF-8 编码 | file, task |
 | `pg.cs` | 按「主密码 + 站点」生成固定密码，站点配置在 `pg.config.json` | config-holder |
-| `calibre-backup.cs` | 将 calibre 书库加密压缩并备份到百度网盘 | 7z, baidu-pan, config-holder, md5, string |
+| `calibre-backup.cs` | 将 calibre 书库加密压缩并备份到百度网盘（`restore` 恢复书库、`clear-history` 清理历史记录） | 7z, baidu-pan, config-holder, md5, string |
 | `compress-media.cs` | 根据分辨率压缩图片和视频 | compress, console, task |
 | `audiobook.cs` | 把目录下的音频合并成带章节的 m4b（`merge`），也可以查看（`info`）、导出（`export`）和修改（`apply`）元数据与章节 | console, file, process, task, video |
 

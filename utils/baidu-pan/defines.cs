@@ -83,6 +83,11 @@ public class BaiduPanFileInfo
 	[JsonPropertyName("path")]
 	public required string Path { get; init; }
 	/// <summary>
+	/// 文件的 id，下载时需要用它换取下载地址；创建目录时构造出来的信息没有这个字段。
+	/// </summary>
+	[JsonPropertyName("fs_id")]
+	public long FsId { get; init; }
+	/// <summary>
 	/// 文件大小，单位 B。
 	/// </summary>
 	[JsonPropertyName("size")]
