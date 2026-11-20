@@ -17,6 +17,7 @@
 #:property DebugType=embedded
 #nullable enable
 
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -210,6 +211,14 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		/// </summary>
 		private Dictionary<string, BaiduPanFileInfo>? bookFolders = null;
 		/// <summary>
+		/// 预扫描得到的作者目录内容，键为作者目录的完整路径。
+		/// </summary>
+		private readonly ConcurrentDictionary<string, string[]> scannedBookDirs = new(StringComparer.Ordinal);
+		/// <summary>
+		/// 预扫描得到的书籍文件列表，键为书籍目录的完整路径；取不到时现场枚举。
+		/// </summary>
+		private readonly ConcurrentDictionary<string, List<FileInfo>> scannedFiles = new(StringComparer.Ordinal);
+		/// <summary>
 		/// 距离上次写盘后又改动了多少本书。
 		/// </summary>
 		private int unsavedCount = 0;
@@ -322,6 +331,8 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					.Select(path => Path.GetFileName(path))
 					.Where(name => !name.StartsWith('.'))
 					.ToList();
+				// 先把所有书籍目录的文件列表并行读进内存，后面的逐本比对直接复用，省掉机械盘上的随机寻道。
+				await ScanBooks(dir, authors);
 				for (int i = 0; i < authors.Count; i++)
 				{
 					var author = authors[i];
@@ -403,6 +414,88 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					Console.CancelKeyPress -= onCancelKeyPress;
 				}
 			}
+		}
+
+		/// <summary>
+		/// 并行读出所有书籍目录里的文件列表。
+		/// </summary>
+		/// <param name="dir">书库根目录。</param>
+		/// <param name="authors">作者目录名。</param>
+		/// <remarks>
+		/// <para>
+		/// 书库常常放在机械盘上，每本书目录都要一次随机寻道。逐本串行枚举时磁盘队列深度只有 1，
+		/// 时间全花在等寻道上；并发读取能让磁盘按物理位置重排请求。同一个约 7000 本、27700 个文件的
+		/// 书库实测从 335 ms 降到 59 ms（热缓存），冷缓存下的差距更大。
+		/// </para>
+		/// <para>
+		/// 这里只是把目录项提前读进内存，逐文件比对的逻辑完全不变；读失败的目录不记结果，
+		/// 由 <see cref="BackupBook"/> 现场枚举，并按原来的方式报错。
+		/// </para>
+		/// </remarks>
+		private async Task ScanBooks(string dir, List<string> authors)
+		{
+			// Spectre 的 Status 不是线程安全的，状态文字只在这个（主）线程上刷新。
+			int done = 0;
+			await AnsiConsole.Status().StartAsync("扫描书籍目录", async ctx =>
+			{
+				Task work = Task.Run(() => Parallel.ForEach(authors, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount, 8) }, author =>
+				{
+					string authorDir = Path.Combine(dir, author);
+					try
+					{
+						string[] bookDirs = Directory.GetDirectories(authorDir);
+						scannedBookDirs[authorDir] = bookDirs;
+						foreach (string bookDir in bookDirs)
+						{
+							if (!BookNameRegex.IsMatch(Path.GetFileName(bookDir)))
+							{
+								continue;
+							}
+							try
+							{
+								scannedFiles[bookDir] = [.. new DirectoryInfo(bookDir).EnumerateFiles("*", SearchOption.AllDirectories)];
+							}
+							catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+							{
+								// 不记结果，BackupBook 会现场枚举并按原来的方式报错。
+							}
+						}
+					}
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+					{
+						// 连作者目录都列不出来时也不记结果，BackupAuthor 会再列一次并抛出同样的错误。
+					}
+					finally
+					{
+						Interlocked.Increment(ref done);
+					}
+				}));
+				while (!work.IsCompleted)
+				{
+					ctx.Status($"扫描书籍目录 {Volatile.Read(ref done)}/{authors.Count}");
+					await Task.Delay(100);
+				}
+				await work;
+			});
+		}
+
+		/// <summary>
+		/// 返回作者目录下的书籍目录，优先使用预扫描的结果。
+		/// </summary>
+		private string[] GetAuthorBookDirs(string authorDir)
+		{
+			return scannedBookDirs.TryGetValue(authorDir, out string[]? bookDirs) ? bookDirs : Directory.GetDirectories(authorDir);
+		}
+
+		/// <summary>
+		/// 返回书籍目录里的文件，优先使用预扫描的结果。
+		/// </summary>
+		private List<FileInfo> GetBookFiles(string dir)
+		{
+			// 预扫描之后才出现的目录、以及预扫描时读失败的目录，都在这里现场枚举。
+			return scannedFiles.TryGetValue(dir, out List<FileInfo>? files)
+				? files
+				: new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).ToList();
 		}
 
 		/// <summary>
@@ -1114,21 +1207,19 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 		private async Task<bool> BackupAuthor(string dir, string author)
 		{
 			bool isBackup = false;
-			var fileNames = Directory.GetDirectories(dir)
-				.Select(path => Path.GetFileName(path))
-				.ToList();
-			foreach (var fileName in fileNames)
+			var bookDirs = GetAuthorBookDirs(dir);
+			foreach (var bookDir in bookDirs)
 			{
-				var match = BookNameRegex.Match(fileName);
+				var match = BookNameRegex.Match(Path.GetFileName(bookDir));
 				if (match.Success)
 				{
 					var name = match.Groups[1].Value;
 					var id = match.Groups[2].Value;
-					isBackup |= await BackupBook(id, author, name, Path.Combine(dir, fileName));
+					isBackup |= await BackupBook(id, author, name, bookDir);
 				}
 				else
 				{
-					string name = $"{author}/{fileName}";
+					string name = $"{author}/{Path.GetFileName(bookDir)}";
 					AnsiConsole.MarkupLine($"[red]未识别的文件名：{Markup.Escape(name)}[/]");
 				}
 			}
@@ -1149,8 +1240,8 @@ sealed class BackupCommand : AsyncCommand<BackupCommand.Settings>
 					// 先迁移旧的备份文件命名，这样内容未改变时可以直接复用已有的备份。
 					bool migrated = await MigrateOldFiles(id);
 					var item = GetBackupConfigItem(id, author, name);
-					// 一次枚举同时拿到路径、大小和修改时间，后面判断是否变化时也复用这些信息，不再重复取文件属性。
-					var files = new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).ToList();
+					// 文件列表来自预扫描：一次枚举同时拿到路径、大小和修改时间，判断是否变化时复用这些信息。
+					var files = GetBookFiles(dir);
 					BackupTask task = new(id, item, dir);
 					List<BackupFileGroup> groups;
 					// 计算目录内所有文件的大小。
@@ -1849,10 +1940,29 @@ sealed class ClearHistoryCommand : AsyncCommand<ClearHistoryCommand.Settings>
 	private static readonly Regex HistoryNameRegex = new(@" \d{4}-\d{2}-\d{2}( |$)");
 
 	/// <summary>
+	/// 每次删除请求携带的文件数。
+	/// </summary>
+	/// <remarks>
+	/// 文件管理接口单次超过 50 个会整批不生效（外层 errno 12、逐项 -9），所以按 50 一批。
+	/// </remarks>
+	private const int DeleteBatchSize = 50;
+
+	/// <summary>
+	/// 一批删除失败后的重试次数。
+	/// </summary>
+	private const int DeleteMaxRetry = 3;
+
+	/// <summary>
+	/// 两批删除之间的等待时间，避免连续请求触发频率限制。
+	/// </summary>
+	private const int DeleteBatchDelayMs = 300;
+
+	/// <summary>
 	/// 执行命令。
 	/// </summary>
 	protected override async Task<int> ExecuteAsync([NotNull] CommandContext context, [NotNull] Settings settings, CancellationToken cancellationToken)
 	{
+		var timer = Stopwatch.StartNew();
 		string libraryDir = Path.GetFullPath(settings.Path ?? Directory.GetCurrentDirectory());
 		// 备份路径记在书库的备份配置里，不用再单独指定。
 		string configPath = Path.Combine(libraryDir, BackupUtils.BackupConfigFile);
@@ -1861,7 +1971,8 @@ sealed class ClearHistoryCommand : AsyncCommand<ClearHistoryCommand.Settings>
 			AnsiConsole.MarkupLine($"[red]{libraryDir.EscapeMarkup()}[/] 里没有备份配置，先备份一次再来");
 			return 1;
 		}
-		string? cloudDir = new ConfigHolder<BackupConfig>(configPath).Config.Dir;
+		ConfigHolder<BackupConfig> configHolder = new(configPath);
+		string? cloudDir = configHolder.Config.Dir;
 		if (string.IsNullOrEmpty(cloudDir))
 		{
 			AnsiConsole.MarkupLine($"[red]{BackupUtils.BackupConfigFile.EscapeMarkup()}[/] 里没有记录备份路径，先备份一次再来");
@@ -1870,57 +1981,219 @@ sealed class ClearHistoryCommand : AsyncCommand<ClearHistoryCommand.Settings>
 		cloudDir = BackupUtils.NormalizeDir(cloudDir);
 		var cloud = new BaiduPan();
 		AnsiConsole.MarkupLine($"准备清理 [green]{cloudDir.EscapeMarkup()}[/] 里的历史记录");
-		// 先扫一遍统计要删多少，确认之后再动手。
-		List<(string Id, List<BaiduPanFileInfo> Files)> history = [];
-		long totalSize = 0;
-		var folders = (await cloud.List(cloudDir)).Where(file => file.IsDir).ToList();
-		await AnsiConsole.Status().StartAsync("正在扫描历史记录", async ctx =>
+		// 递归列一次整个备份目录就够了。以前是逐本书列目录，6000 多本书就是 6000 多次请求，
+		// 而接口大约 0.5 次/秒，光扫描就要几个小时；递归列目录只要几十页（实测 33000 项、34 页、约 3 分钟）。
+		List<BaiduPanFileInfo> all;
+		try
 		{
-			for (int i = 0; i < folders.Count; i++)
+			List<BaiduPanFileInfo> scanned = [];
+			await AnsiConsole.Status().StartAsync("正在扫描历史记录", async ctx =>
 			{
-				var folder = folders[i];
-				ctx.Status($"正在扫描历史记录 {i + 1}/{folders.Count}");
-				var files = await cloud.List($"{cloudDir}{folder.Name}/");
-				var historyFiles = files.Where(file => !file.IsDir && HistoryNameRegex.IsMatch(file.Name)).ToList();
-				if (historyFiles.Count > 0)
-				{
-					history.Add((folder.Name, historyFiles));
-					totalSize += historyFiles.Sum(file => file.Size);
-				}
+				scanned = await cloud.ListAll(cloudDir, count => ctx.Status($"正在扫描历史记录，已读取 {count} 项"));
+			});
+			all = scanned;
+		}
+		catch (Exception e)
+		{
+			AnsiConsole.MarkupLine($"[red]列出备份目录失败[/]：{e.Message.EscapeMarkup()}");
+			return 1;
+		}
+		// 历史记录都在书籍目录里，按目录分组，顺便拿到书籍 id。
+		Dictionary<string, List<BaiduPanFileInfo>> history = new(StringComparer.Ordinal);
+		foreach (var file in all)
+		{
+			if (file.IsDir || !HistoryNameRegex.IsMatch(file.Name))
+			{
+				continue;
 			}
-		});
-		int count = history.Sum(item => item.Files.Count);
+			// 只处理书籍目录这一层，根目录下的 config 之类的文件一律不碰。
+			string? id = GetBookFolderName(cloudDir, file.Path);
+			if (id == null)
+			{
+				continue;
+			}
+			if (!history.TryGetValue(id, out var files))
+			{
+				files = [];
+				history.Add(id, files);
+			}
+			files.Add(file);
+		}
+		int count = history.Sum(item => item.Value.Count);
 		if (count == 0)
 		{
 			AnsiConsole.MarkupLine("[green]没有需要清理的历史记录[/]");
 			return 0;
 		}
+		long totalSize = history.Sum(item => item.Value.Sum(file => file.Size));
 		AnsiConsole.MarkupLine($"{history.Count} 本书共 [yellow]{count}[/] 个历史记录，{totalSize / 1024.0 / 1024.0:0.0} MB");
 		if (!settings.Yes && !AnsiConsole.Confirm("确认删除这些历史记录吗？当前的备份不会受影响。", false))
 		{
 			return 0;
 		}
+		string[] paths = history.SelectMany(pair => pair.Value).Select(file => file.Path).ToArray();
 		int deleted = 0;
+		int skipped = 0;
 		List<string> failed = [];
-		foreach (var (id, files) in history)
+		// 分批删除，一批一个请求。上百批下来要好几分钟，这里必须有进度，否则看起来像卡住了。
+		await AnsiConsole.Progress().StartAsync(async ctx =>
 		{
-			try
+			var task = ctx.AddTask("删除历史记录", maxValue: paths.Length);
+			foreach (var chunk in paths.Chunk(DeleteBatchSize))
 			{
-				await cloud.Delete(files.Select(file => $"{cloudDir}{id}/{file.Name}").ToArray());
-				deleted += files.Count;
+				for (int attempt = 0; ; attempt++)
+				{
+					try
+					{
+						await cloud.Delete(chunk);
+						deleted += chunk.Length;
+						break;
+					}
+					catch (Exception) when (attempt < DeleteMaxRetry)
+					{
+						// 偶发的频率限制和网络抖动，等一会儿重试同一批。
+						await Task.Delay(TimeSpan.FromSeconds(5 * (attempt + 1)));
+					}
+					catch (Exception)
+					{
+						// 整批仍然失败：逐个删。这样既能只记下真正删不掉的文件，
+						// 也能把「同一批里已经被删掉、再删报不存在」的那些算作成功。
+						int consecutiveFailure = 0;
+						foreach (string path in chunk)
+						{
+							// 连续多个文件都失败，多半是频率限制或网络断了，不再一个个硬试，
+							// 这些留给下次运行（重复执行是安全的）。
+							if (consecutiveFailure >= 5)
+							{
+								skipped++;
+								continue;
+							}
+							try
+							{
+								await cloud.Delete(path);
+								deleted++;
+								consecutiveFailure = 0;
+							}
+							catch (BaiduPanNotExistException)
+							{
+								deleted++;
+								consecutiveFailure = 0;
+							}
+							catch (Exception e)
+							{
+								failed.Add($"{path}：{e.Message}");
+								consecutiveFailure++;
+							}
+						}
+						break;
+					}
+				}
+				task.Increment(chunk.Length);
+				// 稍微放慢一点，避免连续删除触发频率限制。
+				await Task.Delay(DeleteBatchDelayMs);
 			}
-			catch (Exception e)
-			{
-				failed.Add($"{id}：{e.Message}");
-			}
-		}
+		});
 		AnsiConsole.WriteLine();
-		AnsiConsole.MarkupLine($"已删除 [green]{deleted}[/] 个历史记录，失败 [red]{failed.Count}[/] 个");
-		foreach (string message in failed)
+		string skippedMessage = skipped > 0 ? $"，跳过 [yellow]{skipped}[/] 个（接口连续失败，下次运行会重试）" : "";
+		AnsiConsole.MarkupLine($"已删除 [green]{deleted}[/] 个历史记录，失败 [red]{failed.Count}[/] 个{skippedMessage}");
+		if (failed.Count > 0)
 		{
-			AnsiConsole.MarkupLine($"    [red]{message.EscapeMarkup()}[/]");
+			foreach (string message in failed.Take(10))
+			{
+				AnsiConsole.MarkupLine($"    [red]{message.EscapeMarkup()}[/]");
+			}
+			if (failed.Count > 10)
+			{
+				AnsiConsole.MarkupLine($"    [red]……还有 {failed.Count - 10} 个失败[/]");
+			}
 		}
-		return failed.Count == 0 ? 0 : 1;
+		// 删除会改变书籍目录的内容，配置里记的云端目录修改时间随之失效。
+		// 不刷新的话下次备份会为每本受影响的书单独列一次目录（几千次请求，要一个多小时）。
+		if (deleted > 0)
+		{
+			await RefreshFolderMtimes(cloud, cloudDir, configHolder, history.Keys);
+		}
+		AnsiConsole.MarkupLine($"总用时 {FormatElapsed(timer.Elapsed)}");
+		return failed.Count == 0 && skipped == 0 ? 0 : 1;
+	}
+
+	/// <summary>
+	/// 返回文件所在书籍目录的名字；不在备份目录下的书籍目录里时返回 null。
+	/// </summary>
+	/// <remarks>
+	/// 递归列目录返回的是完整路径（例如 <c>/Book/1665/all 2026-02-27 3f2a1b8c</c>），
+	/// 这里只认「备份目录下恰好一层」的文件，根目录里的 config 之类不会被当成历史记录。
+	/// </remarks>
+	private static string? GetBookFolderName(string cloudDir, string path)
+	{
+		int index = path.LastIndexOf('/');
+		if (index <= 0)
+		{
+			return null;
+		}
+		string parent = path[..index];
+		// cloudDir 总是以 / 开头和结尾，去掉末尾的 / 就是父目录的前缀。
+		string prefix = cloudDir[..^1];
+		if (!parent.StartsWith(prefix + "/", StringComparison.Ordinal))
+		{
+			return null;
+		}
+		string name = parent[(prefix.Length + 1)..];
+		return name.Length > 0 && !name.Contains('/') ? name : null;
+	}
+
+	/// <summary>
+	/// 刷新受影响书籍的云端目录修改时间。
+	/// </summary>
+	/// <remarks>
+	/// 删掉历史记录会改变书籍目录的内容，配置里记的目录修改时间随之失效。不刷新的话，
+	/// 下次备份判断「云端备份还在不在」时对每本受影响的书都要单独列一次目录，
+	/// 几千次请求要一个多小时；这里重新列一次根目录就能一次补齐。
+	/// </remarks>
+	private static async Task RefreshFolderMtimes(BaiduPan cloud, string cloudDir, ConfigHolder<BackupConfig> configHolder, IEnumerable<string> ids)
+	{
+		try
+		{
+			int updated = 0;
+			await AnsiConsole.Status().StartAsync("刷新书籍目录的修改时间", async ctx =>
+			{
+				var folders = (await cloud.List(cloudDir))
+					.Where(file => file.IsDir)
+					.ToDictionary(file => file.Name, StringComparer.Ordinal);
+				foreach (string id in ids)
+				{
+					if (folders.TryGetValue(id, out var folder)
+						&& configHolder.Config.Files.TryGetValue(id, out var item)
+						&& item.FolderMtime != folder.ServerModifyTime)
+					{
+						item.FolderMtime = folder.ServerModifyTime;
+						updated++;
+					}
+				}
+			});
+			if (updated > 0)
+			{
+				configHolder.Save();
+				AnsiConsole.MarkupLine($"    已刷新 [green]{updated}[/] 本书的目录修改时间，下次备份不用再逐本列目录");
+			}
+		}
+		catch (Exception e)
+		{
+			// 刷新失败只会让下次备份多做一次校验，不影响这次清理的结果。
+			AnsiConsole.MarkupLine($"    [yellow]刷新目录修改时间失败[/]：{e.Message.EscapeMarkup()}");
+		}
+	}
+
+	/// <summary>
+	/// 把耗时格式化成「x 分 y 秒」。
+	/// </summary>
+	private static string FormatElapsed(TimeSpan elapsed)
+	{
+		if (elapsed.TotalMinutes < 1)
+		{
+			return $"{elapsed.TotalSeconds:0.0} 秒";
+		}
+		return $"{(int)elapsed.TotalMinutes} 分 {elapsed.Seconds} 秒";
 	}
 }
 

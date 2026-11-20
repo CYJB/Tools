@@ -34,6 +34,17 @@ public class BaiduPan
 	/// 递归列目录时每页的最大条数。
 	/// </summary>
 	private const int ListAllPageSize = 1000;
+	/// <summary>
+	/// 递归列目录翻页之间的等待时间。
+	/// </summary>
+	/// <remarks>
+	/// 实测连续翻页约 1 次/秒会返回 31034（请求过于频繁）或 HTTP 400，1.5 秒一页比较稳。
+	/// </remarks>
+	private const int ListAllPageDelayMs = 1500;
+	/// <summary>
+	/// 递归列目录单页请求失败后的最大重试次数。
+	/// </summary>
+	private const int ListAllMaxRetry = 5;
 
 	private static readonly HttpClient httpClient = new();
 	/// <summary>
@@ -175,9 +186,10 @@ public class BaiduPan
 	/// <param name="dir">要列出的目录，以 / 开头的绝对路径。</param>
 	/// <remarks>
 	/// 使用 <c>multimedia?method=listall</c> 接口：目录参数名是 <c>path</c>（不是 <c>parent_path</c>），
-	/// 分页使用 <c>start</c>/<c>limit</c>，<c>has_more</c> 为 0 表示没有更多数据，返回项包含 <c>isdir</c>。
+	/// 递归遍历整个子树，返回项带完整 <c>path</c>；分页使用 <c>start</c>/<c>limit</c>，<c>has_more</c> 为 0 表示取完。
 	/// </remarks>
-	public async Task<List<BaiduPanFileInfo>> ListAll(string dir)
+	/// <param name="progressCallback">每读完一页回调一次，参数是已经读到的条数。</param>
+	public async Task<List<BaiduPanFileInfo>> ListAll(string dir, Action<int>? progressCallback = null)
 	{
 		string accessToken = await BaiduPanAuth.GetAccessTokenAsync();
 		dir = TrimEndSlash(dir);
@@ -185,32 +197,68 @@ public class BaiduPan
 		List<BaiduPanFileInfo> result = [];
 		while (true)
 		{
-			var url = MultimediaAPI + HttpUtils.BuildUriQuery(new() {
-				{ "method", "listall" },
-				{ "access_token", accessToken },
-				{ "path", dir },
-				{ "recursion", "1" },
-				{ "start", start.ToString() },
-				{ "limit", ListAllPageSize.ToString() },
-			});
-			var root = await GetJsonAsync(url);
-			if (!root.TryGetProperty("list", out var list))
+			JsonElement page = default;
+			for (int attempt = 0; ; attempt++)
 			{
-				throw BaiduPanError.GetErrnoException(root.TryGetProperty("errno", out var errno) ? errno.GetInt32() : -1, dir);
+				if (attempt > ListAllMaxRetry)
+				{
+					throw new Exception($"{dir} 连续 {attempt} 次请求失败，稍后再试");
+				}
+				if (attempt > 0)
+				{
+					// 退避等待：3、6、12、24 秒，躲开频率限制和偶发的 HTTP 400。
+					await Task.Delay(TimeSpan.FromSeconds(Math.Min(24, 3 * Math.Pow(2, attempt - 1))));
+				}
+				var url = MultimediaAPI + HttpUtils.BuildUriQuery(new() {
+					{ "method", "listall" },
+					{ "access_token", accessToken },
+					{ "path", dir },
+					{ "recursion", "1" },
+					{ "start", start.ToString() },
+					{ "limit", ListAllPageSize.ToString() },
+				});
+				try
+				{
+					using var response = await httpClient.GetAsync(url);
+					string json = await response.Content.ReadAsStringAsync();
+					if (!response.IsSuccessStatusCode || json.Length < 2)
+					{
+						// 连续翻页时偶发 HTTP 400，重试一般就能过。
+						continue;
+					}
+					var root = JsonDocument.Parse(json).RootElement;
+					int errno = root.TryGetProperty("errno", out var errnoElement) ? errnoElement.GetInt32() : 0;
+					if (errno == FrequencyLimitErrno)
+					{
+						continue;
+					}
+					if (errno != 0)
+					{
+						throw BaiduPanError.GetErrnoException(errno, dir);
+					}
+					page = root;
+					break;
+				}
+				catch (Exception e) when (e is HttpRequestException or OperationCanceledException)
+				{
+					// 网络抖动、请求超时也重试。
+				}
 			}
+			var list = page.GetProperty("list");
 			foreach (var item in list.EnumerateArray())
 			{
 				result.Add(JsonSerializer.Deserialize<BaiduPanFileInfo>(item)!);
 			}
+			progressCallback?.Invoke(result.Count);
 			// has_more 为 0 表示已经取完；接口没返回该字段时按「还有更多」处理，靠空页结束。
-			bool hasMore = !root.TryGetProperty("has_more", out var hasMoreElement) || hasMoreElement.GetInt32() != 0;
-			if (!hasMore || list.GetArrayLength() == 0)
+			bool hasMore = !page.TryGetProperty("has_more", out var hasMoreElement) || hasMoreElement.GetInt32() != 0;
+			int count = list.GetArrayLength();
+			if (!hasMore || count == 0)
 			{
 				break;
 			}
-			start += list.GetArrayLength();
-			// 连续翻页容易触发频率限制，这里主动放慢一点。
-			await Task.Delay(TimeSpan.FromMilliseconds(200));
+			start += count;
+			await Task.Delay(TimeSpan.FromMilliseconds(ListAllPageDelayMs));
 		}
 		return result;
 	}
